@@ -6,7 +6,6 @@ import android.util.Log;
 import jj2000.j2k.codestream.HeaderInfo;
 import jj2000.j2k.codestream.reader.BitstreamReaderAgent;
 import jj2000.j2k.codestream.reader.HeaderDecoder;
-import jj2000.j2k.fileformat.reader.FileFormatReader;
 import jj2000.j2k.image.BlkImgDataSrc;
 import jj2000.j2k.image.Coord;
 import jj2000.j2k.image.DataBlkInt;
@@ -82,11 +81,11 @@ public class Jpeg2000Decoder {
             // Check for JP2 file format container vs raw J2K codestream
             if (isJP2Container(imageBytes)) {
                 Log.d(TAG, "Detected JP2 container format");
-                FileFormatReader ffReader = new FileFormatReader(rio);
-                ffReader.readFileFormat();
-                if (ffReader.JP2FFUsed) {
-                    rio.seek(ffReader.firstCodeStreamPos);
-                    Log.d(TAG, "Codestream starts at offset " + ffReader.firstCodeStreamPos);
+                // Find the J2K codestream start (0xFF 0x4F) within the JP2 container
+                int csPos = findCodestreamPosition(imageBytes);
+                if (csPos > 0) {
+                    rio.seek(csPos);
+                    Log.d(TAG, "Codestream starts at offset " + csPos);
                 }
             } else {
                 Log.d(TAG, "Detected raw J2K codestream");
@@ -212,6 +211,19 @@ public class Jpeg2000Decoder {
         int idx = blk.offset + y * blk.scanw + x;
         if (idx >= 0 && idx < blk.getDataInt().length) {
             return blk.getDataInt()[idx];
+        }
+        return 0;
+    }
+
+    /**
+     * Find the J2K codestream start position (0xFF 0x4F marker) within a JP2 container.
+     * This avoids depending on FileFormatReader field access which varies across jj2000 versions.
+     */
+    private static int findCodestreamPosition(byte[] data) {
+        for (int i = 0; i < data.length - 1; i++) {
+            if (data[i] == (byte) 0xFF && data[i + 1] == (byte) 0x4F) {
+                return i;
+            }
         }
         return 0;
     }
