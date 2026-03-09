@@ -69,6 +69,7 @@
             <feature name="NfcDocumentReader">
                 <param name="ios-package" value="NfcDocumentReaderPlugin" />
             </feature>
+            <preference name="UseSwiftLanguageVersion" value="5" />
         </config-file>
 
         <config-file target="*-Info.plist" parent="NFCReaderUsageDescription">
