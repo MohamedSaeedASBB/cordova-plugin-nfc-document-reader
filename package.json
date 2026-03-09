@@ -1,0 +1,35 @@
+{
+  "name": "cordova-plugin-nfc-document-reader",
+  "version": "1.0.0",
+  "description": "Cordova plugin for reading NFC-enabled identity documents (passports, ID cards) using ICAO 9303 / MRTD standard",
+  "cordova": {
+    "id": "cordova-plugin-nfc-document-reader",
+    "platforms": [
+      "android",
+      "ios"
+    ]
+  },
+  "keywords": [
+    "cordova",
+    "nfc",
+    "passport",
+    "mrtd",
+    "icao",
+    "bac",
+    "pace",
+    "mrz",
+    "document-reader",
+    "identity"
+  ],
+  "author": "NFC Reader",
+  "license": "MIT",
+  "engines": {
+    "cordovaDependencies": {
+      ">=1.0.0": {
+        "cordova": ">=10.0.0",
+        "cordova-android": ">=10.0.0",
+        "cordova-ios": ">=6.0.0"
+      }
+    }
+  }
+}

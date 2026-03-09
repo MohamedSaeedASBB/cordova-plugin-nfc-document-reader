@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        id="cordova-plugin-nfc-document-reader"
+        version="1.0.0">
+
+    <name>NFC Document Reader</name>
+    <description>Read NFC-enabled identity documents (passports, ID cards) using ICAO 9303 / MRTD standard</description>
+    <license>MIT</license>
+    <keywords>nfc,passport,mrtd,icao,bac,pace,mrz,document-reader</keywords>
+
+    <js-module src="www/NfcDocumentReader.js" name="NfcDocumentReader">
+        <clobbers target="NfcDocumentReader" />
+    </js-module>
+
+    <!-- ==================== ANDROID ==================== -->
+    <platform name="android">
+
+        <config-file target="res/xml/config.xml" parent="/*">
+            <feature name="NfcDocumentReader">
+                <param name="android-package" value="com.nfcdocumentreader.NfcDocumentReaderPlugin" />
+            </feature>
+        </config-file>
+
+        <config-file target="AndroidManifest.xml" parent="/*">
+            <uses-permission android:name="android.permission.NFC" />
+            <uses-permission android:name="android.permission.CAMERA" />
+            <uses-feature android:name="android.hardware.nfc" android:required="true" />
+            <uses-feature android:name="android.hardware.camera" android:required="false" />
+        </config-file>
+
+        <config-file target="AndroidManifest.xml" parent="/manifest/application">
+            <activity android:name="com.nfcdocumentreader.MrzCameraActivity"
+                      android:theme="@style/Theme.AppCompat.NoActionBar"
+                      android:screenOrientation="portrait" />
+        </config-file>
+
+        <resource-file src="src/android/nfc_tech_filter.xml" target="res/xml/nfc_tech_filter.xml" />
+        <resource-file src="src/android/activity_mrz_camera.xml" target="res/layout/activity_mrz_camera.xml" />
+
+        <source-file src="src/android/NfcDocumentReaderPlugin.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/NfcDocumentReader.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/Jpeg2000Decoder.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/MrzOcrProcessor.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/MrzCameraActivity.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/DocumentData.java" target-dir="src/com/nfcdocumentreader" />
+
+        <!-- Dependencies -->
+        <framework src="org.jmrtd:jmrtd:0.7.42" />
+        <framework src="net.sf.scuba:scuba-sc-android:0.0.26" />
+        <framework src="org.bouncycastle:bcprov-jdk18on:1.78" />
+        <framework src="edu.ucar:jj2000:5.2" />
+        <framework src="com.google.mlkit:text-recognition:16.0.0" />
+        <framework src="androidx.camera:camera-camera2:1.3.1" />
+        <framework src="androidx.camera:camera-lifecycle:1.3.1" />
+        <framework src="androidx.camera:camera-view:1.3.1" />
+        <framework src="androidx.appcompat:appcompat:1.6.1" />
+
+    </platform>
+
+    <!-- ==================== iOS ==================== -->
+    <platform name="ios">
+
+        <config-file target="config.xml" parent="/*">
+            <feature name="NfcDocumentReader">
+                <param name="ios-package" value="NfcDocumentReaderPlugin" />
+            </feature>
+        </config-file>
+
+        <config-file target="*-Info.plist" parent="NFCReaderUsageDescription">
+            <string>This app requires NFC access to read identity document chips.</string>
+        </config-file>
+
+        <config-file target="*-Info.plist" parent="com.apple.developer.nfc.readersession.iso7816.select-identifiers">
+            <array>
+                <string>A0000002471001</string>
+                <string>A0000002472001</string>
+            </array>
+        </config-file>
+
+        <config-file target="*-Info.plist" parent="NSCameraUsageDescription">
+            <string>This app requires camera access to scan the MRZ on your document.</string>
+        </config-file>
+
+        <source-file src="src/ios/NfcDocumentReaderPlugin.swift" />
+        <source-file src="src/ios/NfcDocumentReader.swift" />
+        <source-file src="src/ios/MrzCameraViewController.swift" />
+        <source-file src="src/ios/MrzOcrProcessor.swift" />
+
+        <podspec>
+            <config>
+                <source url="https://cdn.cocoapods.org/" />
+            </config>
+            <pods use-frameworks="true">
+                <pod name="NFCPassportReader" spec="~> 1.1.9" />
+            </pods>
+        </podspec>
+
+        <config-file target="*-Entitlements-Debug.plist" parent="com.apple.developer.nfc.readersession.formats">
+            <array>
+                <string>TAG</string>
+            </array>
+        </config-file>
+        <config-file target="*-Entitlements-Release.plist" parent="com.apple.developer.nfc.readersession.formats">
+            <array>
+                <string>TAG</string>
+            </array>
+        </config-file>
+
+    </platform>
+
+</plugin>
