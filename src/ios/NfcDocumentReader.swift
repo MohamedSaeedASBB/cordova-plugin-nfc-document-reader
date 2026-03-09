@@ -37,7 +37,7 @@ class NfcDocumentReaderWrapper {
         // Configure data groups to read
         let tags: [DataGroupId] = [.DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
 
-        // Progress updates
+        // Read passport with progress updates
         passportReader.readPassport(mrzKey: mrzKey, tags: tags,
             skipSecureElements: true,
             customDisplayMessage: { displayMessage in
@@ -47,7 +47,7 @@ class NfcDocumentReaderWrapper {
                     progressHandler("waitingForTag", nil, nil)
                 case .authenticatingWithPassport(_):
                     progressHandler("authenticating", nil, nil)
-                case .readingDataGroupProgress(let dg, let progress):
+                case .readingDataGroupProgress(let dg, _):
                     let dgNumber = self.dataGroupIdToNumber(dg)
                     let dgName = self.dataGroupName(dgNumber)
                     progressHandler("readingDataGroup", dgNumber, dgName)
@@ -56,36 +56,37 @@ class NfcDocumentReaderWrapper {
                 default:
                     progressHandler("connecting", nil, nil)
                 }
-                return displayMessage.localizedDescription
-            }
-        ) { [weak self] result in
-            guard let self = self, !self.isCancelled else {
-                completionHandler(nil, "NFC reading cancelled")
-                return
-            }
-
-            switch result {
-            case .success(let passport):
-                let documentData = self.extractData(from: passport)
-                completionHandler(documentData, nil)
-
-            case .failure(let error):
-                let errorMessage: String
-                switch error {
-                case NFCPassportReaderError.TagNotValid:
-                    errorMessage = "Invalid NFC tag. Please ensure you are scanning a valid document."
-                case NFCPassportReaderError.ConnectionError:
-                    errorMessage = "Connection lost. Please hold the document steady and try again."
-                case NFCPassportReaderError.InvalidMRZKey:
-                    errorMessage = "Authentication failed. Please verify your MRZ data."
-                default:
-                    errorMessage = error.localizedDescription
+                return displayMessage.description
+            },
+            completed: { [weak self] (passport, error) in
+                guard let self = self, !self.isCancelled else {
+                    completionHandler(nil, "NFC reading cancelled")
+                    return
                 }
-                completionHandler(nil, errorMessage)
-            }
 
-            self.passportReader = nil
-        }
+                if let error = error {
+                    let errorMessage: String
+                    switch error {
+                    case .TagNotValid:
+                        errorMessage = "Invalid NFC tag. Please ensure you are scanning a valid document."
+                    case .ConnectionError:
+                        errorMessage = "Connection lost. Please hold the document steady and try again."
+                    case .InvalidMRZKey:
+                        errorMessage = "Authentication failed. Please verify your MRZ data."
+                    default:
+                        errorMessage = error.localizedDescription
+                    }
+                    completionHandler(nil, errorMessage)
+                } else if let passport = passport {
+                    let documentData = self.extractData(from: passport)
+                    completionHandler(documentData, nil)
+                } else {
+                    completionHandler(nil, "Unknown error reading document")
+                }
+
+                self.passportReader = nil
+            }
+        )
 
         #else
         completionHandler(nil, "NFCPassportReader library not available. Please install the CocoaPod.")
@@ -132,30 +133,30 @@ class NfcDocumentReaderWrapper {
         }
 
         // DG11 - Additional Personal Details
-        data["fullNameOfHolder"] = passport.fullName ?? ""
-        data["otherNames"] = passport.otherNames ?? []
-        data["personalSummary"] = passport.personalSummary ?? ""
+        data["fullNameOfHolder"] = (passport.lastName + " " + passport.firstName).trimmingCharacters(in: .whitespaces)
+        data["otherNames"] = [String]()
+        data["personalSummary"] = ""
         data["placeOfBirth"] = passport.placeOfBirth ?? ""
         data["permanentAddress"] = passport.residenceAddress ?? ""
         data["telephone"] = passport.phoneNumber ?? ""
 
         // DG12 - Additional Document Details
         data["issuingAuthority"] = passport.issuingAuthority
-        data["dateOfIssue"] = passport.documentSigningCertificateIssuer ?? ""
+        data["dateOfIssue"] = ""
         data["endorsementsAndObservations"] = ""
 
         // Metadata
         var dataGroupsRead: [Int] = []
-        for dg in passport.dataGroupsRead {
-            dataGroupsRead.append(dataGroupIdToNumber(dg))
+        for (dgId, _) in passport.dataGroupsRead {
+            dataGroupsRead.append(dataGroupIdToNumber(dgId))
         }
         data["dataGroupsRead"] = dataGroupsRead
         data["bacSucceeded"] = passport.BACStatus == .success
         data["chipAuthSucceeded"] = passport.chipAuthenticationStatus == .success
 
         var readErrors: [String: String] = [:]
-        for (dg, error) in passport.dataGroupErrors {
-            readErrors[String(dataGroupIdToNumber(dg))] = error
+        for error in passport.verificationErrors {
+            readErrors["verification"] = error.localizedDescription
         }
         data["readErrors"] = readErrors
 
