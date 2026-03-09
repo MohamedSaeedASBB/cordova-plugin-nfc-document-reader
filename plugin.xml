@@ -62,6 +62,9 @@
     <!-- ==================== iOS ==================== -->
     <platform name="ios">
 
+        <hook type="after_plugin_install" src="hooks/set_swift_version.js" />
+        <hook type="after_prepare" src="hooks/set_swift_version.js" />
+
         <config-file target="config.xml" parent="/*">
             <feature name="NfcDocumentReader">
                 <param name="ios-package" value="NfcDocumentReaderPlugin" />
