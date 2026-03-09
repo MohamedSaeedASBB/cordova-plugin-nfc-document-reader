@@ -1,6 +1,10 @@
 import Foundation
 import CoreNFC
 
+#if canImport(Cordova)
+import Cordova
+#endif
+
 @objc(NfcDocumentReaderPlugin)
 class NfcDocumentReaderPlugin: CDVPlugin {
 

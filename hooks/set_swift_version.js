@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Hook script to set SWIFT_VERSION build setting in the Xcode project.
+ * Hook script to set SWIFT_VERSION build setting in the Xcode project
+ * and configure the bridging header with Cordova imports.
  * This replaces cordova-plugin-add-swift-support to avoid version conflicts with MABS.
  */
 
@@ -30,6 +31,7 @@ module.exports = function (context) {
         return;
     }
 
+    var appName = path.basename(xcodeProjectDir, '.xcodeproj');
     var pbxprojPath = path.join(xcodeProjectDir, 'project.pbxproj');
 
     if (!fs.existsSync(pbxprojPath)) {
@@ -39,47 +41,57 @@ module.exports = function (context) {
 
     var pbxproj = fs.readFileSync(pbxprojPath, 'utf8');
 
-    // Check if SWIFT_VERSION is already set
+    // Set SWIFT_VERSION in all build configurations
     if (pbxproj.indexOf('SWIFT_VERSION') === -1) {
-        // Add SWIFT_VERSION to all build configurations
         pbxproj = pbxproj.replace(/buildSettings = \{/g, 'buildSettings = {\n\t\t\t\tSWIFT_VERSION = 5.0;');
-        fs.writeFileSync(pbxprojPath, pbxproj, 'utf8');
         console.log('set_swift_version: Set SWIFT_VERSION = 5.0 in all build configurations.');
     } else {
-        // Update existing SWIFT_VERSION to 5.0
         pbxproj = pbxproj.replace(/SWIFT_VERSION = [^;]*;/g, 'SWIFT_VERSION = 5.0;');
-        fs.writeFileSync(pbxprojPath, pbxproj, 'utf8');
         console.log('set_swift_version: Updated SWIFT_VERSION to 5.0.');
     }
 
-    // Ensure we have an empty bridging header if one doesn't exist
-    var bridgingHeaderName;
-    files = fs.readdirSync(platformRoot);
-    for (var j = 0; j < files.length; j++) {
-        if (files[j].match(/^.*-Bridging-Header\.h$/)) {
-            bridgingHeaderName = files[j];
-            break;
+    fs.writeFileSync(pbxprojPath, pbxproj, 'utf8');
+
+    // Create or update bridging header with Cordova imports
+    var bridgingHeaderName = appName + '-Bridging-Header.h';
+    var bridgingHeaderPath = path.join(platformRoot, bridgingHeaderName);
+
+    var bridgingHeaderContent = [
+        '//',
+        '//  ' + bridgingHeaderName,
+        '//  Bridging header for Swift/Cordova support',
+        '//',
+        '',
+        '#import <Cordova/CDV.h>',
+        '#import <Cordova/CDVPlugin.h>',
+        '#import <Cordova/CDVInvokedUrlCommand.h>',
+        '#import <Cordova/CDVPluginResult.h>',
+        '#import <Cordova/CDVCommandDelegate.h>',
+        '#import <Cordova/CDVViewController.h>',
+        ''
+    ].join('\n');
+
+    // Check if bridging header exists and has Cordova imports
+    var needsUpdate = true;
+    if (fs.existsSync(bridgingHeaderPath)) {
+        var existingContent = fs.readFileSync(bridgingHeaderPath, 'utf8');
+        if (existingContent.indexOf('#import <Cordova/CDV.h>') !== -1) {
+            needsUpdate = false;
+            console.log('set_swift_version: Bridging header already has Cordova imports.');
         }
     }
 
-    if (!bridgingHeaderName) {
-        // Find the app name from the xcodeproj
-        var appName = path.basename(xcodeProjectDir, '.xcodeproj');
-        bridgingHeaderName = appName + '-Bridging-Header.h';
-        var bridgingHeaderPath = path.join(platformRoot, bridgingHeaderName);
+    if (needsUpdate) {
+        fs.writeFileSync(bridgingHeaderPath, bridgingHeaderContent, 'utf8');
+        console.log('set_swift_version: Created/updated bridging header with Cordova imports: ' + bridgingHeaderName);
+    }
 
-        if (!fs.existsSync(bridgingHeaderPath)) {
-            fs.writeFileSync(bridgingHeaderPath, '//\n//  Bridging header for Swift support\n//\n', 'utf8');
-            console.log('set_swift_version: Created bridging header: ' + bridgingHeaderName);
-
-            // Add bridging header to build settings
-            var updatedPbxproj = fs.readFileSync(pbxprojPath, 'utf8');
-            if (updatedPbxproj.indexOf('SWIFT_OBJC_BRIDGING_HEADER') === -1) {
-                updatedPbxproj = updatedPbxproj.replace(/SWIFT_VERSION = 5\.0;/g,
-                    'SWIFT_VERSION = 5.0;\n\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = "' + bridgingHeaderName + '";');
-                fs.writeFileSync(pbxprojPath, updatedPbxproj, 'utf8');
-                console.log('set_swift_version: Added SWIFT_OBJC_BRIDGING_HEADER to build settings.');
-            }
-        }
+    // Ensure SWIFT_OBJC_BRIDGING_HEADER is in build settings
+    pbxproj = fs.readFileSync(pbxprojPath, 'utf8');
+    if (pbxproj.indexOf('SWIFT_OBJC_BRIDGING_HEADER') === -1) {
+        pbxproj = pbxproj.replace(/SWIFT_VERSION = 5\.0;/g,
+            'SWIFT_VERSION = 5.0;\n\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = "' + bridgingHeaderName + '";');
+        fs.writeFileSync(pbxprojPath, pbxproj, 'utf8');
+        console.log('set_swift_version: Added SWIFT_OBJC_BRIDGING_HEADER to build settings.');
     }
 };
