@@ -104,11 +104,13 @@
         <config-file target="*-Entitlements-Debug.plist" parent="com.apple.developer.nfc.readersession.formats">
             <array>
                 <string>TAG</string>
+                <string>NDEF</string>
             </array>
         </config-file>
         <config-file target="*-Entitlements-Release.plist" parent="com.apple.developer.nfc.readersession.formats">
             <array>
                 <string>TAG</string>
+                <string>NDEF</string>
             </array>
         </config-file>
 

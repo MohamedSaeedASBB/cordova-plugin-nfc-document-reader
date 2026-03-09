@@ -64,8 +64,8 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     @objc(readNFC:)
     func readNFC(command: CDVInvokedUrlCommand) {
-        guard #available(iOS 13.0, *), NFCTagReaderSession.readingAvailable else {
-            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC is not available on this device")
+        guard #available(iOS 13.0, *) else {
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC requires iOS 13 or later")
             commandDelegate.send(result, callbackId: command.callbackId)
             return
         }
