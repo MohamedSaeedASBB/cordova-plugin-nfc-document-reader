@@ -62,6 +62,8 @@
     <!-- ==================== iOS ==================== -->
     <platform name="ios">
 
+        <preference name="UseSwiftLanguageVersion" value="5" />
+
         <dependency id="cordova-plugin-add-swift-support@2.0.2"/>
 
         <config-file target="config.xml" parent="/*">
@@ -70,6 +72,12 @@
             </feature>
             <preference name="UseSwiftLanguageVersion" value="5" />
         </config-file>
+
+        <config-file target="*-Info.plist" parent="SWIFT_VERSION">
+            <string>5</string>
+        </config-file>
+
+        <preference name="swift-version" value="5" />
 
         <config-file target="*-Info.plist" parent="NFCReaderUsageDescription">
             <string>This app requires NFC access to read identity document chips.</string>
