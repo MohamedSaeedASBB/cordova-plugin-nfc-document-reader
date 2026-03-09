@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:paddingTop="8dp"
+    android:paddingBottom="32dp">
+
+    <!-- Drag handle -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="20dp"
+        android:background="#DDDDDD" />
+
+    <!-- NFC Icon -->
+    <TextView
+        android:id="@+id/nfcIcon"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:text="\uD83D\uDCF3"
+        android:textSize="48sp"
+        android:background="#F0F4FF" />
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/nfcTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Ready to Scan"
+        android:textColor="#1A1A1A"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Description -->
+    <TextView
+        android:id="@+id/nfcDescription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Hold your document against the back of your phone and keep it still."
+        android:textColor="#666666"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp"
+        android:lineSpacingExtra="4dp"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Progress indicator (hidden until tag found) -->
+    <ProgressBar
+        android:id="@+id/nfcProgressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="8dp"
+        android:indeterminate="true"
+        android:visibility="gone" />
+
+    <!-- Status text (changes as reading progresses) -->
+    <TextView
+        android:id="@+id/nfcStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Waiting for document..."
+        android:textColor="#1976D2"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Cancel button -->
+    <Button
+        android:id="@+id/nfcCancelButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:text="Cancel"
+        android:textColor="#1976D2"
+        android:textSize="14sp"
+        android:textAllCaps="false"
+        android:background="@android:color/transparent" />
+
+</LinearLayout>

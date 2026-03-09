@@ -1,12 +1,22 @@
 package com.nfcdocumentreader;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.os.Build;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -34,6 +44,14 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfBirth;
     private String pendingDateOfExpiry;
     private boolean nfcReadingActive = false;
+
+    // NFC scan bottom sheet dialog
+    private Dialog nfcDialog;
+    private TextView nfcTitle;
+    private TextView nfcDescription;
+    private TextView nfcStatus;
+    private TextView nfcIcon;
+    private ProgressBar nfcProgressBar;
 
     @Override
     protected void pluginInitialize() {
@@ -154,6 +172,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         nfcCallbackContext = callbackContext;
         nfcReadingActive = true;
 
+        // Show the NFC scan bottom sheet
+        showNfcDialog();
+
         // Send initial state
         sendProgressEvent("waitingForTag");
 
@@ -164,6 +185,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private void cancelRead(CallbackContext callbackContext) {
         nfcReadingActive = false;
         disableNfcForegroundDispatch();
+        dismissNfcDialog();
 
         if (nfcCallbackContext != null) {
             nfcCallbackContext.error("NFC reading cancelled");
@@ -171,6 +193,120 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         }
 
         callbackContext.success("Cancelled");
+    }
+
+    // ==================== NFC Bottom Sheet Dialog ====================
+
+    private void showNfcDialog() {
+        final Activity activity = cordova.getActivity();
+        if (activity == null) return;
+
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    nfcDialog = new Dialog(activity);
+                    nfcDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+                    int layoutId = activity.getResources().getIdentifier(
+                        "dialog_nfc_scan", "layout", activity.getPackageName());
+                    nfcDialog.setContentView(layoutId);
+
+                    // Style as bottom sheet
+                    Window window = nfcDialog.getWindow();
+                    if (window != null) {
+                        window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
+                            WindowManager.LayoutParams.WRAP_CONTENT);
+                        window.setGravity(Gravity.BOTTOM);
+                        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                        window.getAttributes().windowAnimations = android.R.style.Animation_InputMethod;
+                    }
+
+                    // Prevent dismiss on outside touch while reading
+                    nfcDialog.setCancelable(false);
+                    nfcDialog.setCanceledOnTouchOutside(false);
+
+                    // Find views
+                    nfcTitle = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcTitle", "id", activity.getPackageName()));
+                    nfcDescription = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcDescription", "id", activity.getPackageName()));
+                    nfcStatus = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcStatus", "id", activity.getPackageName()));
+                    nfcIcon = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcIcon", "id", activity.getPackageName()));
+                    nfcProgressBar = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcProgressBar", "id", activity.getPackageName()));
+
+                    Button cancelBtn = nfcDialog.findViewById(activity.getResources().getIdentifier(
+                        "nfcCancelButton", "id", activity.getPackageName()));
+
+                    cancelBtn.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            nfcReadingActive = false;
+                            disableNfcForegroundDispatch();
+                            dismissNfcDialog();
+
+                            if (nfcCallbackContext != null) {
+                                nfcCallbackContext.error("NFC reading cancelled");
+                                nfcCallbackContext = null;
+                            }
+                        }
+                    });
+
+                    nfcDialog.show();
+                    Log.d(TAG, "NFC scan dialog shown");
+                } catch (Exception e) {
+                    Log.e(TAG, "Error showing NFC dialog: " + e.getMessage(), e);
+                }
+            }
+        });
+    }
+
+    private void dismissNfcDialog() {
+        final Activity activity = cordova.getActivity();
+        if (activity == null) return;
+
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (nfcDialog != null && nfcDialog.isShowing()) {
+                        nfcDialog.dismiss();
+                        Log.d(TAG, "NFC scan dialog dismissed");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error dismissing NFC dialog: " + e.getMessage());
+                }
+                nfcDialog = null;
+            }
+        });
+    }
+
+    private void updateNfcDialogState(final String title, final String description,
+                                       final String status, final String icon,
+                                       final boolean showProgress) {
+        final Activity activity = cordova.getActivity();
+        if (activity == null) return;
+
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (nfcDialog == null || !nfcDialog.isShowing()) return;
+                    if (title != null && nfcTitle != null) nfcTitle.setText(title);
+                    if (description != null && nfcDescription != null) nfcDescription.setText(description);
+                    if (status != null && nfcStatus != null) nfcStatus.setText(status);
+                    if (icon != null && nfcIcon != null) nfcIcon.setText(icon);
+                    if (nfcProgressBar != null) {
+                        nfcProgressBar.setVisibility(showProgress ? View.VISIBLE : View.GONE);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error updating NFC dialog: " + e.getMessage());
+                }
+            }
+        });
     }
 
     // ==================== NFC Intent Handling ====================
@@ -193,6 +329,16 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             if (tag != null) {
                 Log.d(TAG, "NFC tag discovered, starting read...");
                 disableNfcForegroundDispatch();
+
+                // Update dialog: tag found, reading started
+                updateNfcDialogState(
+                    "Reading Document",
+                    "Keep the document still against your phone.\nDo not move it until reading is complete.",
+                    "Connecting...",
+                    "\uD83D\uDD04",  // 🔄
+                    true
+                );
+
                 readTag(tag);
             }
         }
@@ -212,26 +358,66 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                             @Override
                             public void onStateChanged(String state) {
                                 sendProgressEvent(state);
+                                // Update dialog based on state
+                                switch (state) {
+                                    case "connecting":
+                                        updateNfcDialogState(null, null, "Connecting to chip...", null, true);
+                                        break;
+                                    case "authenticating":
+                                        updateNfcDialogState(null, null, "Authenticating...", null, true);
+                                        break;
+                                }
                             }
 
                             @Override
                             public void onReadingDataGroup(int dgNumber, String dgName) {
                                 sendDataGroupProgress(dgNumber, dgName);
+                                updateNfcDialogState(null, null,
+                                    "Reading " + dgName + "...", null, true);
                             }
                         });
 
                     DocumentData data = documentReader.getResult();
                     if (data != null) {
+                        // Success — update dialog briefly then dismiss
+                        updateNfcDialogState(
+                            "Success!",
+                            "Document read successfully.",
+                            "Complete",
+                            "\u2705",  // ✅
+                            false
+                        );
+
+                        // Small delay so user sees success state
+                        try { Thread.sleep(800); } catch (InterruptedException ignored) {}
+
+                        dismissNfcDialog();
+
                         JSONObject result = data.toJSON();
                         PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, result);
                         pluginResult.setKeepCallback(false);
                         callback.sendPluginResult(pluginResult);
                     } else {
                         String error = documentReader.getError();
+
+                        // Error — update dialog then dismiss
+                        updateNfcDialogState(
+                            "Error",
+                            error != null ? error : "Unknown error",
+                            "Failed",
+                            "\u274C",  // ❌
+                            false
+                        );
+
+                        try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+
+                        dismissNfcDialog();
+
                         callback.error(error != null ? error : "Unknown error reading document");
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Error reading NFC tag: " + e.getMessage(), e);
+                    dismissNfcDialog();
                     callback.error("Error reading document: " + e.getMessage());
                 }
 
@@ -341,6 +527,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         nfcReadingActive = false;
         nfcCallbackContext = null;
         mrzScanCallbackContext = null;
+        dismissNfcDialog();
         super.onDestroy();
     }
 }
