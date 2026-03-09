@@ -11,6 +11,9 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var nfcCallbackId: String?
     private var mrzScanCallbackId: String?
     private var documentReader: NfcDocumentReaderWrapper?
+    private var nfcBottomSheet: NfcScanBottomSheet?
+    private var dgReadCount: Int = 0
+    private let totalDGs: Int = 6 // DG1, DG2, DG7, DG11, DG12, SOD
 
     // MARK: - Plugin Lifecycle
 
@@ -80,6 +83,10 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
 
         nfcCallbackId = command.callbackId
+        dgReadCount = 0
+
+        // Show bottom sheet
+        showNfcBottomSheet()
 
         // Send initial state
         sendProgressEvent(state: "waitingForTag")
@@ -95,6 +102,26 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             progressHandler: { [weak self] state, dgNumber, dgName in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+
+                    // Update bottom sheet
+                    switch state {
+                    case "waitingForTag":
+                        self.nfcBottomSheet?.showWaiting()
+                    case "connecting":
+                        self.nfcBottomSheet?.showConnecting()
+                    case "authenticating":
+                        self.nfcBottomSheet?.showAuthenticating()
+                    case "readingDataGroup":
+                        if let dg = dgNumber, let name = dgName {
+                            self.dgReadCount += 1
+                            let progress = Float(self.dgReadCount) / Float(self.totalDGs)
+                            self.nfcBottomSheet?.showReadingDataGroup(dgNumber: dg, dgName: name, progress: min(progress, 0.95))
+                        }
+                    default:
+                        break
+                    }
+
+                    // Send progress event to JS
                     if let dg = dgNumber, let name = dgName {
                         self.sendDataGroupProgress(dgNumber: dg, dgName: name)
                     } else {
@@ -107,13 +134,26 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                     guard let self = self, let callbackId = self.nfcCallbackId else { return }
 
                     if let error = error {
+                        // Show error on bottom sheet, then dismiss
+                        self.nfcBottomSheet?.showError(message: error)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.dismissNfcBottomSheet()
+                        }
+
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: error)
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
                     } else if let result = result {
+                        // Show success, then dismiss
+                        self.nfcBottomSheet?.showSuccess()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            self.dismissNfcBottomSheet()
+                        }
+
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
                         pluginResult?.keepCallback = false
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
                     } else {
+                        self.dismissNfcBottomSheet()
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Unknown error")
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
                     }
@@ -130,6 +170,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     @objc(cancelRead:)
     func cancelRead(command: CDVInvokedUrlCommand) {
         documentReader?.cancel()
+        dismissNfcBottomSheet()
 
         if let callbackId = nfcCallbackId {
             let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC reading cancelled")
@@ -139,6 +180,35 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: "Cancelled")
         commandDelegate.send(result, callbackId: command.callbackId)
+    }
+
+    // MARK: - Bottom Sheet
+
+    private func showNfcBottomSheet() {
+        let sheet = NfcScanBottomSheet()
+        sheet.modalPresentationStyle = .overFullScreen
+        sheet.modalTransitionStyle = .crossDissolve
+
+        sheet.onCancel = { [weak self] in
+            self?.documentReader?.cancel()
+            self?.dismissNfcBottomSheet()
+
+            if let callbackId = self?.nfcCallbackId {
+                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC reading cancelled")
+                self?.commandDelegate.send(result, callbackId: callbackId)
+                self?.nfcCallbackId = nil
+                self?.documentReader = nil
+            }
+        }
+
+        self.nfcBottomSheet = sheet
+        self.viewController.present(sheet, animated: false)
+    }
+
+    private func dismissNfcBottomSheet() {
+        nfcBottomSheet?.animateOut { [weak self] in
+            self?.nfcBottomSheet = nil
+        }
     }
 
     // MARK: - Progress Events

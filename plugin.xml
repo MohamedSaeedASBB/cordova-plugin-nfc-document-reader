@@ -89,6 +89,7 @@
 
         <source-file src="src/ios/NfcDocumentReaderPlugin.swift" />
         <source-file src="src/ios/NfcDocumentReader.swift" />
+        <source-file src="src/ios/NfcScanBottomSheet.swift" />
         <source-file src="src/ios/MrzCameraViewController.swift" />
         <source-file src="src/ios/MrzOcrProcessor.swift" />
 
