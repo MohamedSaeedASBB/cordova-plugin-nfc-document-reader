@@ -62,13 +62,10 @@
     <!-- ==================== iOS ==================== -->
     <platform name="ios">
 
-        <dependency id="cordova-plugin-add-swift-support@2.0.2"/>
-
         <config-file target="config.xml" parent="/*">
             <feature name="NfcDocumentReader">
                 <param name="ios-package" value="NfcDocumentReaderPlugin" />
             </feature>
-            <preference name="UseSwiftLanguageVersion" value="5" />
         </config-file>
 
         <config-file target="*-Info.plist" parent="NFCReaderUsageDescription">
