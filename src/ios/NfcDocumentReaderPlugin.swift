@@ -12,11 +12,13 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var mrzScanCallbackId: String?
     private var documentReader: NfcDocumentReaderWrapper?
 
-    override init() {
-        self.nfcCallbackId = nil
-        self.mrzScanCallbackId = nil
-        self.documentReader = nil
-        super.init()
+    // MARK: - Plugin Lifecycle
+
+    override func pluginInitialize() {
+        super.pluginInitialize()
+        nfcCallbackId = nil
+        mrzScanCallbackId = nil
+        documentReader = nil
     }
 
     // MARK: - isNFCAvailable
@@ -32,7 +34,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         let result: [String: Any] = [
             "available": available,
-            "enabled": available // On iOS, available means enabled
+            "enabled": available
         ]
 
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
@@ -72,7 +74,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
               let documentNumber = mrzData["documentNumber"] as? String,
               let dateOfBirth = mrzData["dateOfBirth"] as? String,
               let dateOfExpiry = mrzData["dateOfExpiry"] as? String else {
-            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Invalid MRZ data")
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Invalid MRZ data. Required: documentNumber, dateOfBirth, dateOfExpiry")
             commandDelegate.send(result, callbackId: command.callbackId)
             return
         }
@@ -83,33 +85,42 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         sendProgressEvent(state: "waitingForTag")
 
         // Start NFC reading
-        documentReader = NfcDocumentReaderWrapper()
-        documentReader?.readDocument(
+        let reader = NfcDocumentReaderWrapper()
+        self.documentReader = reader
+
+        reader.readDocument(
             documentNumber: documentNumber,
             dateOfBirth: dateOfBirth,
             dateOfExpiry: dateOfExpiry,
             progressHandler: { [weak self] state, dgNumber, dgName in
-                guard let self = self else { return }
-                if let dg = dgNumber, let name = dgName {
-                    self.sendDataGroupProgress(dgNumber: dg, dgName: name)
-                } else {
-                    self.sendProgressEvent(state: state)
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if let dg = dgNumber, let name = dgName {
+                        self.sendDataGroupProgress(dgNumber: dg, dgName: name)
+                    } else {
+                        self.sendProgressEvent(state: state)
+                    }
                 }
             },
             completionHandler: { [weak self] result, error in
-                guard let self = self, let callbackId = self.nfcCallbackId else { return }
+                DispatchQueue.main.async {
+                    guard let self = self, let callbackId = self.nfcCallbackId else { return }
 
-                if let error = error {
-                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: error)
-                    self.commandDelegate.send(pluginResult, callbackId: callbackId)
-                } else if let result = result {
-                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
-                    pluginResult?.keepCallback = false
-                    self.commandDelegate.send(pluginResult, callbackId: callbackId)
+                    if let error = error {
+                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: error)
+                        self.commandDelegate.send(pluginResult, callbackId: callbackId)
+                    } else if let result = result {
+                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
+                        pluginResult?.keepCallback = false
+                        self.commandDelegate.send(pluginResult, callbackId: callbackId)
+                    } else {
+                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Unknown error")
+                        self.commandDelegate.send(pluginResult, callbackId: callbackId)
+                    }
+
+                    self.nfcCallbackId = nil
+                    self.documentReader = nil
                 }
-
-                self.nfcCallbackId = nil
-                self.documentReader = nil
             }
         )
     }
