@@ -276,35 +276,48 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     // ==================== NFC Foreground Dispatch ====================
 
     private void enableNfcForegroundDispatch() {
-        Activity activity = cordova.getActivity();
+        final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
 
-        Intent intent = new Intent(activity, activity.getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            flags |= PendingIntent.FLAG_MUTABLE;
-        }
-        PendingIntent pendingIntent = PendingIntent.getActivity(activity, 0, intent, flags);
-        String[][] techList = new String[][]{new String[]{"android.nfc.tech.IsoDep"}};
+        // MUST run on UI thread — enableForegroundDispatch throws if called from background
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Intent intent = new Intent(activity, activity.getClass())
+                        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        flags |= PendingIntent.FLAG_MUTABLE;
+                    }
+                    PendingIntent pendingIntent = PendingIntent.getActivity(activity, 0, intent, flags);
+                    String[][] techList = new String[][]{new String[]{"android.nfc.tech.IsoDep"}};
 
-        try {
-            nfcAdapter.enableForegroundDispatch(activity, pendingIntent, null, techList);
-            Log.d(TAG, "NFC foreground dispatch enabled");
-        } catch (Exception e) {
-            Log.e(TAG, "Error enabling NFC foreground dispatch: " + e.getMessage());
-        }
+                    nfcAdapter.enableForegroundDispatch(activity, pendingIntent, null, techList);
+                    Log.d(TAG, "NFC foreground dispatch enabled");
+                } catch (Exception e) {
+                    Log.e(TAG, "Error enabling NFC foreground dispatch: " + e.getMessage());
+                }
+            }
+        });
     }
 
     private void disableNfcForegroundDispatch() {
-        Activity activity = cordova.getActivity();
+        final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
 
-        try {
-            nfcAdapter.disableForegroundDispatch(activity);
-            Log.d(TAG, "NFC foreground dispatch disabled");
-        } catch (Exception e) {
-            Log.e(TAG, "Error disabling NFC foreground dispatch: " + e.getMessage());
-        }
+        // MUST run on UI thread
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    nfcAdapter.disableForegroundDispatch(activity);
+                    Log.d(TAG, "NFC foreground dispatch disabled");
+                } catch (Exception e) {
+                    Log.e(TAG, "Error disabling NFC foreground dispatch: " + e.getMessage());
+                }
+            }
+        });
     }
 
     // ==================== Lifecycle ====================
