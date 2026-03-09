@@ -4,11 +4,14 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Size;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -43,16 +46,19 @@ public class MrzCameraActivity extends AppCompatActivity {
     private static final int REQUEST_CAMERA_PERMISSION = 1001;
 
     private PreviewView cameraPreview;
+    private View mrzGuideFrame;
     private TextView statusText;
     private TextView resultText;
     private LinearLayout resultContainer;
     private Button confirmButton;
+    private Button rescanButton;
     private Button cancelButton;
+    private ImageButton closeButton;
 
     private ExecutorService cameraExecutor;
     private TextRecognizer textRecognizer;
     private MrzOcrProcessor mrzProcessor;
-    private boolean mrzDetected = false;
+    private volatile boolean mrzDetected = false;
 
     private MrzOcrProcessor.MrzParseResult detectedResult;
 
@@ -60,21 +66,27 @@ public class MrzCameraActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Find views from layout
         setContentView(getResources().getIdentifier("activity_mrz_camera", "layout", getPackageName()));
 
-        cameraPreview = findViewById(getResources().getIdentifier("cameraPreview", "id", getPackageName()));
-        statusText = findViewById(getResources().getIdentifier("statusText", "id", getPackageName()));
-        resultText = findViewById(getResources().getIdentifier("resultText", "id", getPackageName()));
-        resultContainer = findViewById(getResources().getIdentifier("resultContainer", "id", getPackageName()));
-        confirmButton = findViewById(getResources().getIdentifier("confirmButton", "id", getPackageName()));
-        cancelButton = findViewById(getResources().getIdentifier("cancelButton", "id", getPackageName()));
+        // Find views
+        cameraPreview = findViewById(getResId("cameraPreview"));
+        mrzGuideFrame = findViewById(getResId("mrzGuideFrame"));
+        statusText = findViewById(getResId("statusText"));
+        resultText = findViewById(getResId("resultText"));
+        resultContainer = findViewById(getResId("resultContainer"));
+        confirmButton = findViewById(getResId("confirmButton"));
+        rescanButton = findViewById(getResId("rescanButton"));
+        cancelButton = findViewById(getResId("cancelButton"));
+        closeButton = findViewById(getResId("closeButton"));
 
         cameraExecutor = Executors.newSingleThreadExecutor();
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         mrzProcessor = new MrzOcrProcessor();
 
-        // Set initial status
+        // Draw MRZ guide frame border
+        setGuideFrameBorder(Color.WHITE);
+
+        // Set initial status based on document type
         String documentType = getIntent().getStringExtra("documentType");
         if ("passport".equals(documentType)) {
             statusText.setText("Point camera at the MRZ lines on your passport data page");
@@ -82,11 +94,19 @@ public class MrzCameraActivity extends AppCompatActivity {
             statusText.setText("Point camera at the MRZ lines on the back of your ID card");
         }
 
+        // Close button (top-right X)
+        closeButton.setOnClickListener(v -> {
+            setResult(Activity.RESULT_CANCELED);
+            finish();
+        });
+
+        // Cancel button (bottom)
         cancelButton.setOnClickListener(v -> {
             setResult(Activity.RESULT_CANCELED);
             finish();
         });
 
+        // Confirm button — return MRZ data
         confirmButton.setOnClickListener(v -> {
             if (detectedResult != null && detectedResult.isSuccess()) {
                 Intent data = new Intent();
@@ -100,6 +120,9 @@ public class MrzCameraActivity extends AppCompatActivity {
             }
         });
 
+        // Re-scan button — reset and scan again
+        rescanButton.setOnClickListener(v -> resetScan());
+
         // Check camera permission
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -109,6 +132,23 @@ public class MrzCameraActivity extends AppCompatActivity {
                 new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
         }
     }
+
+    private int getResId(String name) {
+        return getResources().getIdentifier(name, "id", getPackageName());
+    }
+
+    // ==================== MRZ Guide Frame ====================
+
+    private void setGuideFrameBorder(int color) {
+        GradientDrawable border = new GradientDrawable();
+        border.setShape(GradientDrawable.RECTANGLE);
+        border.setStroke(3, color);
+        border.setCornerRadius(12f);
+        border.setColor(Color.TRANSPARENT);
+        mrzGuideFrame.setBackground(border);
+    }
+
+    // ==================== Camera ====================
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
@@ -161,6 +201,8 @@ public class MrzCameraActivity extends AppCompatActivity {
         }, ContextCompat.getMainExecutor(this));
     }
 
+    // ==================== OCR Processing ====================
+
     @SuppressWarnings("UnsafeOptInUsageError")
     private void processImage(ImageProxy imageProxy) {
         android.media.Image mediaImage = imageProxy.getImage();
@@ -188,12 +230,50 @@ public class MrzCameraActivity extends AppCompatActivity {
             .addOnCompleteListener(task -> imageProxy.close());
     }
 
+    // ==================== UI State ====================
+
     private void showResult(MrzOcrProcessor.MrzParseResult result) {
-        statusText.setText("MRZ detected (" + result.format + ")!");
+        // Update guide frame to green
+        setGuideFrameBorder(Color.parseColor("#4CAF50"));
+
+        // Update status
+        statusText.setText("MRZ detected (" + result.format + ")");
+
+        // Show result card
         resultContainer.setVisibility(View.VISIBLE);
-        resultText.setText("Doc: " + result.documentNumber +
-            "\nDOB: " + result.dateOfBirth + " | Exp: " + result.dateOfExpiry);
+        resultText.setText(
+            "Document: " + result.documentNumber +
+            "\nDate of Birth: " + result.dateOfBirth +
+            "\nDate of Expiry: " + result.dateOfExpiry
+        );
+
+        // Show confirm and re-scan buttons
+        confirmButton.setVisibility(View.VISIBLE);
+        rescanButton.setVisibility(View.VISIBLE);
     }
+
+    private void resetScan() {
+        mrzDetected = false;
+        detectedResult = null;
+
+        // Reset guide frame to white
+        setGuideFrameBorder(Color.WHITE);
+
+        // Reset status
+        String documentType = getIntent().getStringExtra("documentType");
+        if ("passport".equals(documentType)) {
+            statusText.setText("Point camera at the MRZ lines on your passport data page");
+        } else {
+            statusText.setText("Point camera at the MRZ lines on the back of your ID card");
+        }
+
+        // Hide result card and buttons
+        resultContainer.setVisibility(View.GONE);
+        confirmButton.setVisibility(View.GONE);
+        rescanButton.setVisibility(View.GONE);
+    }
+
+    // ==================== Lifecycle ====================
 
     @Override
     protected void onDestroy() {
