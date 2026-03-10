@@ -34,29 +34,32 @@ class NfcDocumentReaderWrapper {
         let passportReader = PassportReader()
         self.passportReader = passportReader
 
-        // Configure data groups to read
+        // Only request DG1 (MRZ) and SOD as required. Others are optional
+        // and may not exist on all documents (especially national ID cards).
         let tags: [DataGroupId] = [.DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
 
-        // Read passport with progress updates
+        // Read document with progress updates
         passportReader.readPassport(mrzKey: mrzKey, tags: tags,
             skipSecureElements: true,
             customDisplayMessage: { displayMessage in
-                // Map NFCPassportReader display messages to our progress events
                 switch displayMessage {
                 case .requestPresentPassport:
                     progressHandler("waitingForTag", nil, nil)
-                case .authenticatingWithPassport(_):
+                    return "Hold your iPhone near the document."
+                case .authenticatingWithPassport(let progress):
                     progressHandler("authenticating", nil, nil)
-                case .readingDataGroupProgress(let dg, _):
+                    return "Authenticating...\n\n" + self.progressIndicator(progress)
+                case .readingDataGroupProgress(let dg, let progress):
                     let dgNumber = self.dataGroupIdToNumber(dg)
                     let dgName = self.dataGroupName(dgNumber)
                     progressHandler("readingDataGroup", dgNumber, dgName)
+                    return "Reading \(dgName)...\n\n" + self.progressIndicator(progress)
                 case .successfulRead:
                     progressHandler("success", nil, nil)
-                default:
-                    progressHandler("connecting", nil, nil)
+                    return "Document read successfully."
+                case .error(let error):
+                    return "Error: \(error.localizedDescription)"
                 }
-                return displayMessage.description
             },
             completed: { [weak self] (passport, error) in
                 guard let self = self, !self.isCancelled else {
@@ -65,6 +68,14 @@ class NfcDocumentReaderWrapper {
                 }
 
                 if let error = error {
+                    // Check if the error is about a missing optional data group
+                    // If we got a passport model despite the error, use it
+                    if let passport = passport {
+                        let documentData = self.extractData(from: passport)
+                        completionHandler(documentData, nil)
+                        return
+                    }
+
                     let errorMessage: String
                     switch error {
                     case .TagNotValid:
@@ -196,6 +207,13 @@ class NfcDocumentReaderWrapper {
     private func imageToBase64(_ image: UIImage) -> String {
         guard let pngData = image.pngData() else { return "" }
         return pngData.base64EncodedString()
+    }
+
+    private func progressIndicator(_ progress: Int) -> String {
+        let totalSegments = 5
+        let filled = max(0, min(totalSegments, (progress * totalSegments) / 100))
+        let empty = totalSegments - filled
+        return String(repeating: "\u{25CF} ", count: filled) + String(repeating: "\u{25CB} ", count: empty)
     }
 
     #if canImport(NFCPassportReader)
