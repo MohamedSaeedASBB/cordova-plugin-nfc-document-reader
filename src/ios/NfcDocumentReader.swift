@@ -91,8 +91,6 @@ class NfcDocumentReaderWrapper {
                         errorMessage = "Connection lost. Please hold the document steady and try again."
                     case .InvalidMRZKey:
                         errorMessage = "Authentication failed. Please verify your MRZ data."
-                    case .SecurityStatusNotSatisfied:
-                        errorMessage = "Access denied by document chip. Some data groups may require additional authentication."
                     default:
                         errorMessage = error.localizedDescription
                     }
