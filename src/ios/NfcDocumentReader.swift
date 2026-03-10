@@ -178,11 +178,14 @@ class NfcDocumentReaderWrapper {
     // MARK: - Utilities
 
     private func generateMRZKey(documentNumber: String, dateOfBirth: String, dateOfExpiry: String) -> String {
-        // MRZ key format: documentNumber + checkDigit + dateOfBirth + checkDigit + dateOfExpiry + checkDigit
-        let docNumCheck = computeCheckDigit(documentNumber)
+        // MRZ key format: documentNumber(9 chars padded) + checkDigit + dateOfBirth + checkDigit + dateOfExpiry + checkDigit
+        // Document number MUST be padded to 9 characters with '<' for BAC authentication
+        var paddedDocNum = documentNumber
+        while paddedDocNum.count < 9 { paddedDocNum.append("<") }
+        let docNumCheck = computeCheckDigit(paddedDocNum)
         let dobCheck = computeCheckDigit(dateOfBirth)
         let expCheck = computeCheckDigit(dateOfExpiry)
-        return documentNumber + String(docNumCheck) + dateOfBirth + String(dobCheck) + dateOfExpiry + String(expCheck)
+        return paddedDocNum + String(docNumCheck) + dateOfBirth + String(dobCheck) + dateOfExpiry + String(expCheck)
     }
 
     private func computeCheckDigit(_ input: String) -> Character {
