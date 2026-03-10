@@ -13,7 +13,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var documentReader: NfcDocumentReaderWrapper?
     private var nfcBottomSheet: NfcScanBottomSheet?
     private var dgReadCount: Int = 0
-    private let totalDGs: Int = 6 // DG1, DG2, DG7, DG11, DG12, SOD
+    private let totalDGs: Int = 3 // DG1, DG2, SOD
 
     // MARK: - Plugin Lifecycle
 

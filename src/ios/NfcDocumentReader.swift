@@ -34,9 +34,10 @@ class NfcDocumentReaderWrapper {
         let passportReader = PassportReader()
         self.passportReader = passportReader
 
-        // Only request DG1 (MRZ) and SOD as required. Others are optional
-        // and may not exist on all documents (especially national ID cards).
-        let tags: [DataGroupId] = [.DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
+        // Only request essential data groups. DG7, DG11, DG12 are commonly
+        // protected by EAC on national ID cards and cause "security status
+        // not satisfied" errors. DG11/DG12 data is already in DG1's MRZ.
+        let tags: [DataGroupId] = [.DG1, .DG2, .SOD]
 
         // Read document with progress updates
         passportReader.readPassport(mrzKey: mrzKey, tags: tags,
@@ -84,6 +85,8 @@ class NfcDocumentReaderWrapper {
                         errorMessage = "Connection lost. Please hold the document steady and try again."
                     case .InvalidMRZKey:
                         errorMessage = "Authentication failed. Please verify your MRZ data."
+                    case .SecurityStatusNotSatisfied:
+                        errorMessage = "Access denied by document chip. Some data groups may require additional authentication."
                     default:
                         errorMessage = error.localizedDescription
                     }
