@@ -13,7 +13,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var documentReader: NfcDocumentReaderWrapper?
     private var nfcBottomSheet: NfcScanBottomSheet?
     private var dgReadCount: Int = 0
-    private let totalDGs: Int = 3 // DG1, DG2, SOD
+    private var totalDGs: Int = 3
 
     // MARK: - Plugin Lifecycle
 
@@ -82,8 +82,13 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             return
         }
 
+        let mrzFormat = mrzData["format"] as? String ?? "TD1"
+
         nfcCallbackId = command.callbackId
         dgReadCount = 0
+
+        // Set total DGs based on format
+        totalDGs = mrzFormat == "TD3" ? 6 : 3
 
         // Show bottom sheet
         showNfcBottomSheet()
@@ -99,6 +104,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             documentNumber: documentNumber,
             dateOfBirth: dateOfBirth,
             dateOfExpiry: dateOfExpiry,
+            mrzFormat: mrzFormat,
             progressHandler: { [weak self] state, dgNumber, dgName in
                 DispatchQueue.main.async {
                     guard let self = self else { return }

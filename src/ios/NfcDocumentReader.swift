@@ -20,6 +20,7 @@ class NfcDocumentReaderWrapper {
     func readDocument(documentNumber: String,
                       dateOfBirth: String,
                       dateOfExpiry: String,
+                      mrzFormat: String,
                       progressHandler: @escaping ProgressHandler,
                       completionHandler: @escaping CompletionHandler) {
 
@@ -34,10 +35,15 @@ class NfcDocumentReaderWrapper {
         let passportReader = PassportReader()
         self.passportReader = passportReader
 
-        // Only request essential data groups. DG7, DG11, DG12 are commonly
-        // protected by EAC on national ID cards and cause "security status
-        // not satisfied" errors. DG11/DG12 data is already in DG1's MRZ.
-        let tags: [DataGroupId] = [.DG1, .DG2, .SOD]
+        // For passports (TD3), request additional data groups (signature, personal/document details).
+        // For national IDs (TD1/TD2), only request essentials — DG7, DG11, DG12 are commonly
+        // protected by EAC and cause "security status not satisfied" errors.
+        let tags: [DataGroupId]
+        if mrzFormat == "TD3" {
+            tags = [.DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
+        } else {
+            tags = [.DG1, .DG2, .SOD]
+        }
 
         // Read document with progress updates
         passportReader.readPassport(mrzKey: mrzKey, tags: tags,
