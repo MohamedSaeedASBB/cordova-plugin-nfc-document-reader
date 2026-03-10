@@ -124,17 +124,45 @@ class NfcDocumentReaderWrapper {
     private func extractData(from passport: NFCPassportModel) -> [String: Any] {
         var data: [String: Any] = [:]
 
-        // DG1 - MRZ Info
-        data["documentType"] = passport.documentType
-        data["issuingState"] = passport.issuingAuthority
-        data["primaryIdentifier"] = passport.lastName
-        data["secondaryIdentifier"] = passport.firstName
-        data["documentNumber"] = passport.documentNumber
-        data["nationality"] = passport.nationality
-        data["dateOfBirth"] = passport.dateOfBirth
-        data["gender"] = passport.gender
-        data["dateOfExpiry"] = passport.documentExpiryDate
-        data["personalNumber"] = passport.personalNumber ?? ""
+        // Helper to clean MRZ filler characters
+        func clean(_ value: String) -> String {
+            return value.replacingOccurrences(of: "<", with: " ").trimmingCharacters(in: .whitespaces)
+        }
+
+        // Helper to return non-empty value or fallback
+        func nonEmpty(_ value: String, fallback: String = "") -> String {
+            let cleaned = value.trimmingCharacters(in: .whitespaces)
+            return cleaned.isEmpty ? fallback : cleaned
+        }
+
+        // Parse raw MRZ as fallback if library properties are empty
+        var mrzFields: [String: String] = [:]
+        let mrz = passport.passportMRZ
+        if !mrz.isEmpty {
+            mrzFields = parseMRZString(mrz)
+        }
+
+        // DG1 - MRZ Info (with fallback from raw MRZ)
+        data["documentType"] = nonEmpty(passport.documentType, fallback: mrzFields["documentType"] ?? "")
+        data["issuingState"] = nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
+        data["primaryIdentifier"] = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
+        data["secondaryIdentifier"] = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
+        data["documentNumber"] = nonEmpty(passport.documentNumber, fallback: mrzFields["documentNumber"] ?? "")
+            .replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+        data["nationality"] = nonEmpty(passport.nationality, fallback: mrzFields["nationality"] ?? "")
+        data["dateOfBirth"] = nonEmpty(passport.dateOfBirth, fallback: mrzFields["dateOfBirth"] ?? "")
+        data["dateOfExpiry"] = nonEmpty(passport.documentExpiryDate, fallback: mrzFields["dateOfExpiry"] ?? "")
+        data["personalNumber"] = clean(passport.personalNumber ?? mrzFields["personalNumber"] ?? "")
+
+        // Format gender to match Android (Male/Female/Unspecified)
+        let rawGender = nonEmpty(passport.gender, fallback: mrzFields["gender"] ?? "")
+        if rawGender.uppercased().hasPrefix("M") {
+            data["gender"] = "Male"
+        } else if rawGender.uppercased().hasPrefix("F") {
+            data["gender"] = "Female"
+        } else {
+            data["gender"] = "Unspecified"
+        }
 
         // DG2 - Face Image
         if let faceImage = passport.passportImage {
@@ -151,7 +179,9 @@ class NfcDocumentReaderWrapper {
         }
 
         // DG11 - Additional Personal Details
-        data["fullNameOfHolder"] = (passport.lastName + " " + passport.firstName).trimmingCharacters(in: .whitespaces)
+        let lastName = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
+        let firstName = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
+        data["fullNameOfHolder"] = (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
         data["otherNames"] = [String]()
         data["personalSummary"] = ""
         data["placeOfBirth"] = passport.placeOfBirth ?? ""
@@ -159,7 +189,7 @@ class NfcDocumentReaderWrapper {
         data["telephone"] = passport.phoneNumber ?? ""
 
         // DG12 - Additional Document Details
-        data["issuingAuthority"] = passport.issuingAuthority
+        data["issuingAuthority"] = nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
         data["dateOfIssue"] = ""
         data["endorsementsAndObservations"] = ""
 
@@ -179,6 +209,82 @@ class NfcDocumentReaderWrapper {
         data["readErrors"] = readErrors
 
         return data
+    }
+
+    /// Parse raw MRZ string into field dictionary as fallback
+    private func parseMRZString(_ mrz: String) -> [String: String] {
+        var fields: [String: String] = [:]
+        let lines = mrz.components(separatedBy: "\n").filter { !$0.isEmpty }
+
+        if lines.count == 2 && lines[0].count >= 44 {
+            // TD3 (Passport) - 2 lines of 44 chars
+            let line1 = lines[0]
+            let line2 = lines[1]
+            let l1 = Array(line1)
+            let l2 = Array(line2)
+
+            fields["documentType"] = String(l1[0..<2]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["issuingState"] = String(l1[2..<5]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+
+            let nameField = String(l1[5...])
+            let nameParts = nameField.components(separatedBy: "<<")
+            fields["primaryIdentifier"] = nameParts.count > 0 ? nameParts[0] : ""
+            fields["secondaryIdentifier"] = nameParts.count > 1 ? nameParts[1] : ""
+
+            fields["documentNumber"] = String(l2[0..<9]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["nationality"] = String(l2[10..<13]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["dateOfBirth"] = String(l2[13..<19])
+            fields["gender"] = String(l2[20..<21])
+            fields["dateOfExpiry"] = String(l2[21..<27])
+            fields["personalNumber"] = String(l2[28..<42]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+
+        } else if lines.count == 3 && lines[0].count >= 30 {
+            // TD1 (National ID) - 3 lines of 30 chars
+            let line1 = lines[0]
+            let line2 = lines[1]
+            let line3 = lines[2]
+            let l1 = Array(line1)
+            let l2 = Array(line2)
+            let l3 = Array(line3)
+
+            fields["documentType"] = String(l1[0..<2]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["issuingState"] = String(l1[2..<5]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["documentNumber"] = String(l1[5..<14]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+
+            fields["dateOfBirth"] = String(l2[0..<6])
+            fields["gender"] = String(l2[7..<8])
+            fields["dateOfExpiry"] = String(l2[8..<14])
+            fields["nationality"] = String(l2[15..<18]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["personalNumber"] = String(l2[18..<29]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+
+            let nameField = String(l3[0..<30])
+            let nameParts = nameField.components(separatedBy: "<<")
+            fields["primaryIdentifier"] = nameParts.count > 0 ? nameParts[0] : ""
+            fields["secondaryIdentifier"] = nameParts.count > 1 ? nameParts[1] : ""
+
+        } else if lines.count == 2 && lines[0].count >= 36 {
+            // TD2 - 2 lines of 36 chars
+            let line1 = lines[0]
+            let line2 = lines[1]
+            let l1 = Array(line1)
+            let l2 = Array(line2)
+
+            fields["documentType"] = String(l1[0..<2]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["issuingState"] = String(l1[2..<5]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+
+            let nameField = String(l1[5...])
+            let nameParts = nameField.components(separatedBy: "<<")
+            fields["primaryIdentifier"] = nameParts.count > 0 ? nameParts[0] : ""
+            fields["secondaryIdentifier"] = nameParts.count > 1 ? nameParts[1] : ""
+
+            fields["documentNumber"] = String(l2[0..<9]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["nationality"] = String(l2[10..<13]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            fields["dateOfBirth"] = String(l2[13..<19])
+            fields["gender"] = String(l2[20..<21])
+            fields["dateOfExpiry"] = String(l2[21..<27])
+        }
+
+        return fields
     }
     #endif
 
