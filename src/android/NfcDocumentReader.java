@@ -157,7 +157,7 @@ public class NfcDocumentReader {
                                     ", paramId: " + paceInfo.getParameterId());
 
                                 // Use PACEKeySpec for proper PACE key derivation
-                                PACEKeySpec paceKey = PACEKeySpec.createMRZKey(paddedDocNum, dob, exp);
+                                PACEKeySpec paceKey = PACEKeySpec.createMRZKey(bacKey);
                                 passportService.doPACE(
                                     paceKey,
                                     paceInfo.getObjectIdentifier(),
