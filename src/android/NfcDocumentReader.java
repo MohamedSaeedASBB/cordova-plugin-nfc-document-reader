@@ -119,6 +119,10 @@ public class NfcDocumentReader {
                 }
             } catch (Exception e) {
                 Log.d(TAG, "EF.COM not readable without auth (expected): " + e.getMessage());
+                // Re-select MRTD applet to reset card state after failed EF.COM read
+                try {
+                    passportService.sendSelectApplet(false);
+                } catch (Exception ignored) {}
             }
 
             // Prepare MRZ key material
@@ -237,6 +241,17 @@ public class NfcDocumentReader {
 
             // Fall back to BAC with multiple document number variants
             if (!paceSucceeded) {
+                // CRITICAL: Re-select MRTD applet before BAC.
+                // The prior EF.COM (no-auth check) and EF.CardAccess (PACE check) read attempts
+                // may have left the card's state machine in a state that rejects MUTUAL AUTHENTICATE.
+                // Re-selecting the applet resets the card to accept BAC authentication.
+                try {
+                    passportService.sendSelectApplet(false);
+                    Log.d(TAG, "Re-selected MRTD applet before BAC");
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not re-select applet before BAC: " + e.getMessage());
+                }
+
                 Set<String> docNumVariants = new LinkedHashSet<>();
                 docNumVariants.add(paddedDocNum);
                 docNumVariants.add(documentNumber);
