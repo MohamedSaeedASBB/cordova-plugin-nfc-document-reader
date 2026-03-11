@@ -131,12 +131,14 @@ public class NfcDocumentReader {
             }
 
             // Try PACE first with PACEKeySpec (required for PACE-only cards)
+            String paceDebugInfo = "";
             try {
                 InputStream cardAccessInputStream = null;
                 try {
                     cardAccessInputStream = passportService.getInputStream(PassportService.EF_CARD_ACCESS);
                 } catch (Exception e) {
                     Log.d(TAG, "No CardAccess file: " + e.getMessage());
+                    paceDebugInfo = "No EF.CardAccess";
                 }
 
                 if (cardAccessInputStream != null) {
@@ -149,48 +151,70 @@ public class NfcDocumentReader {
                         }
                     }
 
+                    paceDebugInfo = "PACEInfos: " + paceInfos.size();
+
                     if (!paceInfos.isEmpty()) {
-                        // Try PACE with each available PACEInfo
-                        for (PACEInfo paceInfo : paceInfos) {
+                        // Build list of BACKeySpecs to try: padded doc number + original doc number
+                        List<BACKeySpec> paceKeys = new ArrayList<>();
+                        paceKeys.add(bacKey); // padded doc number
+                        if (!paddedDocNum.equals(documentNumber)) {
                             try {
-                                Log.d(TAG, "Attempting PACE with OID: " + paceInfo.getObjectIdentifier() +
-                                    ", paramId: " + paceInfo.getParameterId());
+                                paceKeys.add(new BACKey(documentNumber, dob, exp)); // original doc number
+                            } catch (Exception ignored) {}
+                        }
 
-                                // Use PACEKeySpec for proper PACE key derivation
-                                PACEKeySpec paceKey = PACEKeySpec.createMRZKey(bacKey);
-                                passportService.doPACE(
-                                    paceKey,
-                                    paceInfo.getObjectIdentifier(),
-                                    PACEInfo.toParameterSpec(paceInfo.getParameterId()),
-                                    paceInfo.getParameterId()
-                                );
-                                paceSucceeded = true;
-                                Log.d(TAG, "PACE succeeded with PACEKeySpec");
-                                break;
-                            } catch (Exception e1) {
-                                Log.w(TAG, "PACE with PACEKeySpec failed: " + e1.getMessage());
+                        // Try PACE with each PACEInfo and each key variant
+                        for (PACEInfo paceInfo : paceInfos) {
+                            String oid = paceInfo.getObjectIdentifier();
+                            int paramId = paceInfo.getParameterId();
+                            Log.d(TAG, "PACE entry - OID: " + oid + ", paramId: " + paramId);
+                            paceDebugInfo += "\nOID:" + oid + " param:" + paramId;
 
-                                // Retry with BACKeySpec (some JMRTD versions prefer this)
+                            for (BACKeySpec keyVariant : paceKeys) {
+                                // Attempt 1: PACEKeySpec
                                 try {
-                                    passportService.sendSelectApplet(false);
+                                    PACEKeySpec paceKey = PACEKeySpec.createMRZKey(keyVariant);
+                                    Log.d(TAG, "Trying PACE with PACEKeySpec, docNum: '" + keyVariant.getDocumentNumber() + "'");
                                     passportService.doPACE(
-                                        bacKey,
-                                        paceInfo.getObjectIdentifier(),
-                                        PACEInfo.toParameterSpec(paceInfo.getParameterId()),
-                                        paceInfo.getParameterId()
+                                        paceKey, oid,
+                                        PACEInfo.toParameterSpec(paramId), paramId
                                     );
                                     paceSucceeded = true;
-                                    Log.d(TAG, "PACE succeeded with BACKeySpec");
+                                    Log.d(TAG, "PACE succeeded with PACEKeySpec");
                                     break;
-                                } catch (Exception e2) {
-                                    Log.w(TAG, "PACE with BACKeySpec also failed: " + e2.getMessage());
+                                } catch (Exception e1) {
+                                    Log.w(TAG, "PACE PACEKeySpec failed (doc:'" + keyVariant.getDocumentNumber() + "'): " + e1.getMessage());
+                                    paceDebugInfo += "\nPACEKey err:" + e1.getMessage();
+
+                                    // Attempt 2: BACKeySpec directly
+                                    try {
+                                        passportService.sendSelectApplet(false);
+                                        Log.d(TAG, "Trying PACE with BACKeySpec, docNum: '" + keyVariant.getDocumentNumber() + "'");
+                                        passportService.doPACE(
+                                            keyVariant, oid,
+                                            PACEInfo.toParameterSpec(paramId), paramId
+                                        );
+                                        paceSucceeded = true;
+                                        Log.d(TAG, "PACE succeeded with BACKeySpec");
+                                        break;
+                                    } catch (Exception e2) {
+                                        Log.w(TAG, "PACE BACKeySpec failed (doc:'" + keyVariant.getDocumentNumber() + "'): " + e2.getMessage());
+                                        paceDebugInfo += "\nBACKey err:" + e2.getMessage();
+
+                                        // Reset connection for next attempt
+                                        try {
+                                            passportService.sendSelectApplet(false);
+                                        } catch (Exception ignored) {}
+                                    }
                                 }
                             }
+                            if (paceSucceeded) break;
                         }
                     }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "PACE setup failed: " + e.getMessage());
+                paceDebugInfo += "\nSetup err:" + e.getMessage();
             }
 
             // Fall back to BAC with multiple document number variants
@@ -239,9 +263,13 @@ public class NfcDocumentReader {
 
                 if (!bacSucceeded) {
                     Log.e(TAG, "All BAC attempts failed", lastError);
-                    this.error = "Authentication failed.\n\nValues used:\nDoc#: " + documentNumber +
-                        "\nDOB: " + dateOfBirth + "\nExp: " + dateOfExpiry +
-                        "\n\nTips:\n- Use the document number from the MRZ lines, not the printed number\n" +
+                    String lastErrMsg = lastError != null ? lastError.getMessage() : "unknown";
+                    this.error = "Authentication failed.\n\nValues used:\n" +
+                        "Doc#: " + documentNumber + " (padded: " + paddedDocNum + ")\n" +
+                        "DOB: " + dateOfBirth + "\nExp: " + dateOfExpiry +
+                        "\n\nPACE: " + paceDebugInfo +
+                        "\nBAC error: " + lastErrMsg +
+                        "\n\nTips:\n- Ensure MRZ was scanned correctly\n" +
                         "- Keep the card perfectly still on the phone";
                     return;
                 }
