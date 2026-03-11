@@ -107,19 +107,37 @@ public class NfcDocumentReader {
             if (listener != null) listener.onStateChanged("authenticating");
             boolean bacSucceeded = false;
             boolean paceSucceeded = false;
+            boolean noAuthRequired = false;
 
-            // Ensure dates are exactly 6 characters (YYMMDD)
+            // Some cards don't require BAC/PACE — try reading EF.COM without auth first
+            try {
+                InputStream testComIn = passportService.getInputStream(PassportService.EF_COM);
+                COMFile testComFile = new COMFile(testComIn);
+                if (testComFile.getTagList() != null && testComFile.getTagList().length > 0) {
+                    noAuthRequired = true;
+                    Log.d(TAG, "EF.COM readable without authentication — skipping BAC/PACE");
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "EF.COM not readable without auth (expected): " + e.getMessage());
+            }
+
+            // Prepare MRZ key material
             String dob = padLeft(dateOfBirth, 6, '0');
             if (dob.length() > 6) dob = dob.substring(0, 6);
             String exp = padLeft(dateOfExpiry, 6, '0');
             if (exp.length() > 6) exp = exp.substring(0, 6);
 
-            // Pad document number to 9 chars with '<' for BAC key computation
             String paddedDocNum = documentNumber;
             while (paddedDocNum.length() < 9) paddedDocNum += "<";
 
-            Log.d(TAG, "Auth inputs - docNum: '" + documentNumber + "', padded: '" + paddedDocNum + "', dob: '" + dob + "', exp: '" + exp + "'");
+            Log.d(TAG, "Auth inputs - docNum: '" + documentNumber + "', padded: '" + paddedDocNum + "', dob: '" + dob + "', exp: '" + exp + "', noAuthRequired: " + noAuthRequired);
 
+            if (noAuthRequired) {
+                // Card doesn't require authentication — skip to reading data
+                bacSucceeded = true;
+            }
+
+          if (!noAuthRequired) {
             BACKeySpec bacKey;
             try {
                 bacKey = new BACKey(paddedDocNum, dob, exp);
@@ -274,14 +292,15 @@ public class NfcDocumentReader {
                     return;
                 }
             }
+          } // end if (!noAuthRequired)
 
             // Verify authentication by reading EF.COM
             Log.d(TAG, "Auth complete (PACE=" + paceSucceeded + ", BAC=" + bacSucceeded +
-                "). Verifying file access...");
+                ", noAuth=" + noAuthRequired + "). Verifying file access...");
             if (listener != null) listener.onReadingDataGroup(0, "Verifying access");
 
             int[] comTagList = null;
-            boolean authVerified = false;
+            boolean authVerified = noAuthRequired; // Already verified if no auth was needed
 
             try {
                 InputStream comIn = passportService.getInputStream(PassportService.EF_COM);
