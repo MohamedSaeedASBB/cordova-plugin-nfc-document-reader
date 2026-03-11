@@ -25,6 +25,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.security.Security;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+
 /**
  * Cordova plugin entry point for NFC Document Reader.
  * Bridges JavaScript API calls to native Android NFC/camera functionality.
@@ -55,6 +58,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
     @Override
     protected void pluginInitialize() {
+        // Register full BouncyCastle provider — Android's built-in version is stripped
+        // and lacks elliptic curve support needed for PACE authentication (e.g. Algerian IDs)
+        Security.removeProvider("BC");
+        Security.insertProviderAt(new BouncyCastleProvider(), 1);
+        Log.d(TAG, "BouncyCastle security provider registered");
+
         nfcAdapter = NfcAdapter.getDefaultAdapter(cordova.getActivity());
         documentReader = new NfcDocumentReader();
     }
