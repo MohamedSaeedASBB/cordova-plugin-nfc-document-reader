@@ -24,6 +24,7 @@
 
         <config-file target="AndroidManifest.xml" parent="/*">
             <uses-permission android:name="android.permission.NFC" />
+            <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.CAMERA" />
             <uses-feature android:name="android.hardware.nfc" android:required="true" />
             <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -45,6 +46,7 @@
         <source-file src="src/android/MrzOcrProcessor.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/MrzCameraActivity.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DocumentData.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/DiagnosticsLogger.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />
@@ -92,6 +94,7 @@
         <source-file src="src/ios/NfcScanBottomSheet.swift" />
         <source-file src="src/ios/MrzCameraViewController.swift" />
         <source-file src="src/ios/MrzOcrProcessor.swift" />
+        <source-file src="src/ios/DiagnosticsLogger.swift" />
 
         <podspec>
             <config>

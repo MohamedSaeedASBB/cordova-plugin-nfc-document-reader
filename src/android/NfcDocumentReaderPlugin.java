@@ -161,11 +161,11 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
     private void readNFC(JSONArray args, CallbackContext callbackContext) {
         if (nfcAdapter == null) {
-            callbackContext.error("NFC is not available on this device");
+            callbackContext.error("NFC is not available on this device.");
             return;
         }
         if (!nfcAdapter.isEnabled()) {
-            callbackContext.error("NFC is not enabled. Please enable NFC in device settings.");
+            callbackContext.error("NFC is turned off. Please enable NFC in your device settings.");
             return;
         }
 
@@ -419,16 +419,26 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         pluginResult.setKeepCallback(false);
                         callback.sendPluginResult(pluginResult);
                     } else {
-                        String error = documentReader.getError();
-                        // Append raw MRZ lines for diagnostics
-                        if (error != null && !pendingRawMrzInfo.isEmpty()) {
-                            error += "\n\nRaw MRZ:\n" + pendingRawMrzInfo;
-                        }
+                        String userMessage = documentReader.getError();
+                        if (userMessage == null) userMessage = "An unexpected error occurred. Please try again.";
 
-                        // Error — update dialog then dismiss
+                        // Log diagnostics to Supabase (fire-and-forget)
+                        DiagnosticsLogger.logError(
+                            cordova.getActivity(),
+                            documentReader.getErrorCode() != null ? documentReader.getErrorCode() : "UNKNOWN",
+                            documentReader.getTechnicalError() != null ? documentReader.getTechnicalError() : userMessage,
+                            userMessage,
+                            pendingDocumentNumber,
+                            pendingDateOfBirth,
+                            pendingDateOfExpiry,
+                            documentReader.getPaceDebugInfo(),
+                            documentReader.getNfcTechList()
+                        );
+
+                        // Error — update dialog with friendly message then dismiss
                         updateNfcDialogState(
                             "Error",
-                            error != null ? error : "Unknown error",
+                            userMessage,
                             "Failed",
                             "\u274C",  // ❌
                             false
@@ -438,7 +448,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
                         dismissNfcDialog();
 
-                        callback.error(error != null ? error : "Unknown error reading document");
+                        callback.error(userMessage);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Error reading NFC tag: " + e.getMessage(), e);

@@ -40,7 +40,11 @@ public class NfcDocumentReader {
     private static final int MAX_TAG_TIMEOUT = 20000; // 20 seconds
 
     private DocumentData result;
-    private String error;
+    private String error;           // Friendly user-facing message
+    private String errorCode;       // Machine-readable error code
+    private String technicalError;  // Full technical details for diagnostics
+    private String paceDebugInfo;   // PACE debug info for diagnostics
+    private String nfcTechList;     // NFC technologies for diagnostics
 
     /**
      * Callback interface for reading progress updates.
@@ -54,8 +58,29 @@ public class NfcDocumentReader {
         return result;
     }
 
+    /** Returns the friendly user-facing error message. */
     public String getError() {
         return error;
+    }
+
+    /** Returns the machine-readable error code (e.g. "AUTH_FAILED"). */
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    /** Returns the full technical error details for diagnostics logging. */
+    public String getTechnicalError() {
+        return technicalError;
+    }
+
+    /** Returns PACE debug info for diagnostics. */
+    public String getPaceDebugInfo() {
+        return paceDebugInfo;
+    }
+
+    /** Returns NFC technology list string for diagnostics. */
+    public String getNfcTechList() {
+        return nfcTechList;
     }
 
     /**
@@ -65,6 +90,10 @@ public class NfcDocumentReader {
                              String dateOfExpiry, ProgressListener listener) {
         result = null;
         error = null;
+        errorCode = null;
+        technicalError = null;
+        paceDebugInfo = null;
+        nfcTechList = null;
 
         DocumentData documentData = new DocumentData();
         List<Integer> dataGroupsRead = new ArrayList<>();
@@ -75,9 +104,13 @@ public class NfcDocumentReader {
 
             IsoDep isoDep = IsoDep.get(tag);
             if (isoDep == null) {
-                error = "Tag does not support IsoDep";
+                this.errorCode = "TAG_NOT_SUPPORTED";
+                this.error = "This document's chip could not be detected. Please try repositioning it.";
+                this.technicalError = "Tag does not support IsoDep. Tech list: " + java.util.Arrays.toString(tag.getTechList());
                 return;
             }
+
+            this.nfcTechList = java.util.Arrays.toString(tag.getTechList());
 
             isoDep.setTimeout(MAX_TAG_TIMEOUT);
             isoDep.connect();
@@ -146,14 +179,16 @@ public class NfcDocumentReader {
             try {
                 bacKey = new BACKey(paddedDocNum, dob, exp);
             } catch (IllegalArgumentException e) {
-                this.error = "Invalid MRZ data format.\n\nDoc#: " + documentNumber +
-                    "\nDOB: " + dateOfBirth + "\nExp: " + dateOfExpiry +
-                    "\n\nDates must be in YYMMDD format (6 digits).";
+                this.errorCode = "INVALID_MRZ";
+                this.error = "The document details provided are invalid. Please scan the document again.";
+                this.technicalError = "Invalid BAC key parameters: " + e.getMessage() +
+                    " | Doc#: " + documentNumber + ", DOB: " + dateOfBirth + ", Exp: " + dateOfExpiry;
                 return;
             }
 
             // Try PACE first with PACEKeySpec (required for PACE-only cards)
             String paceDebugInfo = "";
+            this.paceDebugInfo = "";
             try {
                 InputStream cardAccessInputStream = null;
                 try {
@@ -297,13 +332,13 @@ public class NfcDocumentReader {
                 if (!bacSucceeded) {
                     Log.e(TAG, "All BAC attempts failed", lastError);
                     String lastErrMsg = lastError != null ? lastError.getMessage() : "unknown";
-                    this.error = "Authentication failed.\n\nValues used:\n" +
-                        "Doc#: " + documentNumber + " (padded: " + paddedDocNum + ")\n" +
-                        "DOB: " + dateOfBirth + "\nExp: " + dateOfExpiry +
-                        "\n\nPACE: " + paceDebugInfo +
-                        "\nBAC error: " + lastErrMsg +
-                        "\n\nTips:\n- Ensure MRZ was scanned correctly\n" +
-                        "- Keep the card perfectly still on the phone";
+                    this.errorCode = "AUTH_FAILED";
+                    this.error = "Unable to read this document. Please ensure the document details are correct and try again.";
+                    this.technicalError = "BAC error: " + lastErrMsg +
+                        " | Doc#: " + documentNumber + " (padded: " + paddedDocNum + ")" +
+                        " | DOB: " + dateOfBirth + " | Exp: " + dateOfExpiry +
+                        " | PACE: " + paceDebugInfo;
+                    this.paceDebugInfo = paceDebugInfo;
                     return;
                 }
             }
@@ -411,8 +446,11 @@ public class NfcDocumentReader {
             }
 
             if (!authVerified) {
-                this.error = "Authentication appeared to succeed but unable to read card data.\n\n" +
-                    "Possible causes:\n- Card moved during reading\n- Non-standard NFC format\n\nPlease try again.";
+                this.errorCode = "READ_FAILED";
+                this.error = "Unable to read document data. Please keep the document still and try again.";
+                this.technicalError = "Auth appeared to succeed (PACE=" + paceSucceeded + ", BAC=" + bacSucceeded +
+                    ") but EF.COM unreadable after all fallback attempts" +
+                    " | Doc#: " + documentNumber + " | DOB: " + dateOfBirth + " | Exp: " + dateOfExpiry;
                 return;
             }
 
@@ -588,13 +626,19 @@ public class NfcDocumentReader {
 
         } catch (android.nfc.TagLostException e) {
             Log.e(TAG, "Tag was lost during reading", e);
-            this.error = "Connection lost. The document was moved away too soon.\n\nPlease hold it steady and try again.";
+            this.errorCode = "TAG_LOST";
+            this.error = "Connection lost. Please hold the document steady on your phone and try again.";
+            this.technicalError = "TagLostException: " + e.getMessage();
         } catch (java.io.IOException e) {
             Log.e(TAG, "IO error during NFC reading", e);
-            this.error = "Communication error with the chip.\n\nPlease try again and keep the document still.";
+            this.errorCode = "COMM_ERROR";
+            this.error = "A communication error occurred. Please try again and keep the document still.";
+            this.technicalError = "IOException: " + e.getMessage();
         } catch (Exception e) {
             Log.e(TAG, "Error reading document: " + e.getMessage(), e);
-            this.error = e.getMessage() != null ? e.getMessage() : "Unknown error reading document";
+            this.errorCode = "UNKNOWN";
+            this.error = "An unexpected error occurred. Please try again.";
+            this.technicalError = e.getClass().getSimpleName() + ": " + (e.getMessage() != null ? e.getMessage() : "no message");
         }
     }
 

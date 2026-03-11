@@ -83,23 +83,50 @@ class NfcDocumentReaderWrapper {
                         return
                     }
 
-                    let errorMessage: String
+                    let userMessage: String
+                    let errorCode: String
+                    let technicalError = error.localizedDescription
+
                     switch error {
                     case .TagNotValid:
-                        errorMessage = "Invalid NFC tag. Please ensure you are scanning a valid document."
+                        errorCode = "TAG_NOT_SUPPORTED"
+                        userMessage = "This document's chip could not be detected. Please try repositioning it."
                     case .ConnectionError:
-                        errorMessage = "Connection lost. Please hold the document steady and try again."
+                        errorCode = "TAG_LOST"
+                        userMessage = "Connection lost. Please hold the document steady on your phone and try again."
                     case .InvalidMRZKey:
-                        errorMessage = "Authentication failed. Please verify your MRZ data."
+                        errorCode = "AUTH_FAILED"
+                        userMessage = "Unable to read this document. Please ensure the document details are correct and try again."
                     default:
-                        errorMessage = error.localizedDescription
+                        errorCode = "UNKNOWN"
+                        userMessage = "An unexpected error occurred. Please try again."
                     }
-                    completionHandler(nil, errorMessage)
+
+                    // Log diagnostics to Supabase (fire-and-forget)
+                    DiagnosticsLogger.logError(
+                        errorCode: errorCode,
+                        technicalError: technicalError,
+                        userMessage: userMessage,
+                        documentNumber: documentNumber,
+                        dateOfBirth: dateOfBirth,
+                        dateOfExpiry: dateOfExpiry
+                    )
+
+                    completionHandler(nil, userMessage)
                 } else if let passport = passport {
                     let documentData = self.extractData(from: passport)
                     completionHandler(documentData, nil)
                 } else {
-                    completionHandler(nil, "Unknown error reading document")
+                    // Log unknown error
+                    DiagnosticsLogger.logError(
+                        errorCode: "UNKNOWN",
+                        technicalError: "No passport and no error returned from reader",
+                        userMessage: "An unexpected error occurred. Please try again.",
+                        documentNumber: documentNumber,
+                        dateOfBirth: dateOfBirth,
+                        dateOfExpiry: dateOfExpiry
+                    )
+                    completionHandler(nil, "An unexpected error occurred. Please try again.")
                 }
 
                 self.passportReader = nil
