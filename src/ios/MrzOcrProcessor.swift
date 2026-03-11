@@ -99,7 +99,36 @@ class MrzOcrProcessor {
         let chars1 = Array(line1)
         let chars2 = Array(line2)
 
-        let docNumber = String(chars1[5..<14]).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+        // ICAO 9303 Part 5: positions 5-13 = doc number (9 chars), position 14 = check digit
+        // If position 14 is '<', document number overflows into optional data (positions 15+)
+        let docNumberBase = String(chars1[5..<14])
+        let pos14 = chars1[14]
+        let docNumber: String
+
+        if pos14 == "<" || pos14 == Character("<") {
+            // Extended document number — continues in optional data
+            if line1.count > 15 {
+                let optionalData = String(chars1[15...])
+                if let fillerIdx = optionalData.firstIndex(of: "<"), fillerIdx > optionalData.startIndex {
+                    let contAndCheck = String(optionalData[optionalData.startIndex..<fillerIdx])
+                    if contAndCheck.count > 1 {
+                        // Last char is check digit, rest is continuation
+                        let continuation = String(contAndCheck.dropLast())
+                        docNumber = (docNumberBase + continuation).replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+                    } else {
+                        docNumber = docNumberBase.replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+                    }
+                } else {
+                    docNumber = docNumberBase.replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+                }
+            } else {
+                docNumber = docNumberBase.replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+            }
+        } else {
+            // Standard case — 9-char document number
+            docNumber = docNumberBase.replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
+        }
+
         let dob = correctNumericField(String(chars2[0..<6]))
         let expiry = correctNumericField(String(chars2[8..<14]))
 

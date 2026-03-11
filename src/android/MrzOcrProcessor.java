@@ -131,11 +131,38 @@ public class MrzOcrProcessor {
 
     private MrzParseResult parseTD1(String line1, String line2, String line3) {
         try {
-            String docNumber = line1.substring(5, 14).replace("<", "").trim();
+            // ICAO 9303 Part 5 - TD1: positions 5-13 = doc number (9 chars), position 14 = check digit
+            // If position 14 is '<', the document number overflows into optional data (positions 15+)
+            String docNumberBase = line1.substring(5, 14); // 9 chars
+            char pos14 = line1.charAt(14);
+            String docNumber;
+
+            if (pos14 == '<') {
+                // Extended document number — continues in optional data (positions 15-29)
+                // Format: continuation chars + check digit + filler '<'
+                String optionalData = line1.length() > 15 ? line1.substring(15) : "";
+                int fillerIdx = optionalData.indexOf('<');
+                if (fillerIdx > 1) {
+                    // Everything before first '<' = continuation + check digit
+                    // Last char is check digit, rest is continuation
+                    String contAndCheck = optionalData.substring(0, fillerIdx);
+                    String continuation = contAndCheck.substring(0, contAndCheck.length() - 1);
+                    docNumber = (docNumberBase + continuation).replace("<", "").trim();
+                } else {
+                    // No meaningful continuation found
+                    docNumber = docNumberBase.replace("<", "").trim();
+                }
+                Log.d(TAG, "TD1 extended doc number detected: " + docNumber);
+            } else {
+                // Standard case — 9-char document number
+                docNumber = docNumberBase.replace("<", "").trim();
+            }
+
             String dob = correctNumericField(line2.substring(0, 6));
             String expiry = correctNumericField(line2.substring(8, 14));
 
-            Log.d(TAG, "TD1 parsed - DocNum: " + docNumber + ", DOB: " + dob + ", Expiry: " + expiry);
+            Log.d(TAG, "TD1 parsed - DocNum: " + docNumber + ", DOB: " + dob + ", Expiry: " + expiry +
+                ", raw line1: " + line1);
 
             List<String> lines = new ArrayList<>();
             lines.add(line1);

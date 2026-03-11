@@ -46,6 +46,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDocumentNumber;
     private String pendingDateOfBirth;
     private String pendingDateOfExpiry;
+    private String pendingRawMrzInfo = "";
     private boolean nfcReadingActive = false;
 
     // NFC scan bottom sheet dialog
@@ -168,11 +169,22 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             return;
         }
 
+        pendingRawMrzInfo = "";
         try {
             JSONObject mrzData = args.getJSONObject(0);
             pendingDocumentNumber = mrzData.getString("documentNumber");
             pendingDateOfBirth = mrzData.getString("dateOfBirth");
             pendingDateOfExpiry = mrzData.getString("dateOfExpiry");
+            // Extract raw MRZ lines for diagnostic purposes
+            if (mrzData.has("rawMrzLines")) {
+                JSONArray rawLines = mrzData.getJSONArray("rawMrzLines");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < rawLines.length(); i++) {
+                    if (i > 0) sb.append(" | ");
+                    sb.append(rawLines.getString(i));
+                }
+                pendingRawMrzInfo = sb.toString();
+            }
         } catch (JSONException e) {
             callbackContext.error("Invalid MRZ data: " + e.getMessage());
             return;
@@ -408,6 +420,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         callback.sendPluginResult(pluginResult);
                     } else {
                         String error = documentReader.getError();
+                        // Append raw MRZ lines for diagnostics
+                        if (error != null && !pendingRawMrzInfo.isEmpty()) {
+                            error += "\n\nRaw MRZ:\n" + pendingRawMrzInfo;
+                        }
 
                         // Error — update dialog then dismiss
                         updateNfcDialogState(
