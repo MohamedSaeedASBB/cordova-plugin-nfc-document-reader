@@ -166,7 +166,7 @@ public class NfcDocumentReader {
                         // Try PACE with each PACEInfo and each key variant
                         for (PACEInfo paceInfo : paceInfos) {
                             String oid = paceInfo.getObjectIdentifier();
-                            int paramId = paceInfo.getParameterId();
+                            java.math.BigInteger paramId = paceInfo.getParameterId();
                             Log.d(TAG, "PACE entry - OID: " + oid + ", paramId: " + paramId);
                             paceDebugInfo += "\nOID:" + oid + " param:" + paramId;
 
