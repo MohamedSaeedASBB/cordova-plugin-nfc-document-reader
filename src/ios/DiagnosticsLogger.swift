@@ -12,8 +12,8 @@ class DiagnosticsLogger {
 
     // ---- Supabase Configuration ----
     // Replace these with your Supabase project URL and anon key
-    private static let supabaseURL = "https://YOUR_PROJECT.supabase.co"
-    private static let supabaseAnonKey = "YOUR_ANON_KEY"
+    private static let supabaseURL = "https://REDACTED_SUPABASE_URL.supabase.co"
+    private static let supabaseAnonKey = "REDACTED_SUPABASE_KEY"
     private static let pluginVersion = "1.0.0"
     private static let tableName = "nfc_diagnostics"
 

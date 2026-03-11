@@ -26,8 +26,8 @@ public class DiagnosticsLogger {
 
     // ---- Supabase Configuration ----
     // Replace these with your Supabase project URL and anon key
-    private static final String SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
-    private static final String SUPABASE_ANON_KEY = "YOUR_ANON_KEY";
+    private static final String SUPABASE_URL = "https://REDACTED_SUPABASE_URL.supabase.co";
+    private static final String SUPABASE_ANON_KEY = "REDACTED_SUPABASE_KEY";
     private static final String PLUGIN_VERSION = "1.0.0";
     private static final String TABLE_NAME = "nfc_diagnostics";
 
