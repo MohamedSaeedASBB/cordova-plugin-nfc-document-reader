@@ -10,6 +10,7 @@ import net.sf.scuba.smartcards.CardService;
 
 import org.jmrtd.BACKey;
 import org.jmrtd.BACKeySpec;
+import org.jmrtd.PACEKeySpec;
 import org.jmrtd.PassportService;
 import org.jmrtd.lds.PACEInfo;
 import org.jmrtd.lds.SODFile;
@@ -87,9 +88,15 @@ public class NfcDocumentReader {
             CardService cardService = CardService.getInstance(isoDep);
             cardService.open();
 
+            // Use extended max transceive length for better compatibility with PACE cards
+            int maxTrLength = Math.max(
+                PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
+                isoDep.getMaxTransceiveLength()
+            );
+
             PassportService passportService = new PassportService(
                 cardService,
-                PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
+                maxTrLength,
                 PassportService.DEFAULT_MAX_BLOCKSIZE,
                 false,
                 false
@@ -107,11 +114,15 @@ public class NfcDocumentReader {
             String exp = padLeft(dateOfExpiry, 6, '0');
             if (exp.length() > 6) exp = exp.substring(0, 6);
 
-            Log.d(TAG, "BAC key inputs - docNum: '" + documentNumber + "', dob: '" + dob + "', exp: '" + exp + "'");
+            // Pad document number to 9 chars with '<' for BAC key computation
+            String paddedDocNum = documentNumber;
+            while (paddedDocNum.length() < 9) paddedDocNum += "<";
+
+            Log.d(TAG, "Auth inputs - docNum: '" + documentNumber + "', padded: '" + paddedDocNum + "', dob: '" + dob + "', exp: '" + exp + "'");
 
             BACKeySpec bacKey;
             try {
-                bacKey = new BACKey(documentNumber, dob, exp);
+                bacKey = new BACKey(paddedDocNum, dob, exp);
             } catch (IllegalArgumentException e) {
                 this.error = "Invalid MRZ data format.\n\nDoc#: " + documentNumber +
                     "\nDOB: " + dateOfBirth + "\nExp: " + dateOfExpiry +
@@ -119,7 +130,7 @@ public class NfcDocumentReader {
                 return;
             }
 
-            // Try PACE first
+            // Try PACE first with PACEKeySpec (required for PACE-only cards)
             try {
                 InputStream cardAccessInputStream = null;
                 try {
@@ -139,25 +150,53 @@ public class NfcDocumentReader {
                     }
 
                     if (!paceInfos.isEmpty()) {
-                        PACEInfo paceInfo = paceInfos.get(0);
-                        Log.d(TAG, "Attempting PACE with OID: " + paceInfo.getObjectIdentifier());
-                        passportService.doPACE(
-                            bacKey,
-                            paceInfo.getObjectIdentifier(),
-                            PACEInfo.toParameterSpec(paceInfo.getParameterId()),
-                            paceInfo.getParameterId()
-                        );
-                        paceSucceeded = true;
-                        Log.d(TAG, "PACE authentication succeeded");
+                        // Try PACE with each available PACEInfo
+                        for (PACEInfo paceInfo : paceInfos) {
+                            try {
+                                Log.d(TAG, "Attempting PACE with OID: " + paceInfo.getObjectIdentifier() +
+                                    ", paramId: " + paceInfo.getParameterId());
+
+                                // Use PACEKeySpec for proper PACE key derivation
+                                PACEKeySpec paceKey = PACEKeySpec.createMRZKey(paddedDocNum, dob, exp);
+                                passportService.doPACE(
+                                    paceKey,
+                                    paceInfo.getObjectIdentifier(),
+                                    PACEInfo.toParameterSpec(paceInfo.getParameterId()),
+                                    paceInfo.getParameterId()
+                                );
+                                paceSucceeded = true;
+                                Log.d(TAG, "PACE succeeded with PACEKeySpec");
+                                break;
+                            } catch (Exception e1) {
+                                Log.w(TAG, "PACE with PACEKeySpec failed: " + e1.getMessage());
+
+                                // Retry with BACKeySpec (some JMRTD versions prefer this)
+                                try {
+                                    passportService.sendSelectApplet(false);
+                                    passportService.doPACE(
+                                        bacKey,
+                                        paceInfo.getObjectIdentifier(),
+                                        PACEInfo.toParameterSpec(paceInfo.getParameterId()),
+                                        paceInfo.getParameterId()
+                                    );
+                                    paceSucceeded = true;
+                                    Log.d(TAG, "PACE succeeded with BACKeySpec");
+                                    break;
+                                } catch (Exception e2) {
+                                    Log.w(TAG, "PACE with BACKeySpec also failed: " + e2.getMessage());
+                                }
+                            }
+                        }
                     }
                 }
             } catch (Exception e) {
-                Log.w(TAG, "PACE failed: " + e.getMessage());
+                Log.w(TAG, "PACE setup failed: " + e.getMessage());
             }
 
             // Fall back to BAC with multiple document number variants
             if (!paceSucceeded) {
                 Set<String> docNumVariants = new LinkedHashSet<>();
+                docNumVariants.add(paddedDocNum);
                 docNumVariants.add(documentNumber);
 
                 if (documentNumber.length() < 9) {
@@ -186,7 +225,7 @@ public class NfcDocumentReader {
 
                         try {
                             if (isoDep.isConnected()) {
-                                passportService.sendSelectApplet(paceSucceeded);
+                                passportService.sendSelectApplet(false);
                             } else {
                                 Log.e(TAG, "Tag lost during BAC attempts");
                                 break;
@@ -231,7 +270,7 @@ public class NfcDocumentReader {
                 Log.w(TAG, "PACE may not have established proper secure messaging - trying BAC fallback...");
                 try {
                     passportService.sendSelectApplet(false);
-                    BACKeySpec bacFallbackKey = new BACKey(documentNumber, dob, exp);
+                    BACKeySpec bacFallbackKey = new BACKey(paddedDocNum, dob, exp);
                     passportService.doBAC(bacFallbackKey);
                     bacSucceeded = true;
                     Log.d(TAG, "BAC fallback succeeded!");
@@ -269,6 +308,7 @@ public class NfcDocumentReader {
             if (!authVerified && paceSucceeded) {
                 Log.w(TAG, "Trying BAC with doc number variants after PACE failure...");
                 Set<String> variants = new LinkedHashSet<>();
+                variants.add(paddedDocNum);
                 variants.add(documentNumber);
                 if (documentNumber.length() < 9) variants.add(padRight(documentNumber, 9, '<'));
                 if (documentNumber.length() > 9) variants.add(documentNumber.substring(0, 9));
