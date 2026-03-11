@@ -24,12 +24,25 @@ public class DiagnosticsLogger {
 
     private static final String TAG = "DiagnosticsLogger";
 
-    // ---- Supabase Configuration ----
-    // Replace these with your Supabase project URL and anon key
-    private static final String SUPABASE_URL = "https://REDACTED_SUPABASE_URL.supabase.co";
-    private static final String SUPABASE_ANON_KEY = "REDACTED_SUPABASE_KEY";
+    // ---- Supabase Configuration (obfuscated) ----
+    // XOR-encoded to prevent plaintext extraction from decompiled APK
+    private static final int[] OB_URL = {38, 18, 23, 52, 26, 91, 72, 97, 21, 9, 39, 3, 7, 9, 32, 9, 2, 55, 6, 5, 3, 58, 22, 1, 41, 3, 25, 1, 96, 21, 22, 52, 8, 3, 6, 61, 3, 77, 39, 6};
+    private static final int[] OB_KEY = {61, 4, 60, 52, 28, 3, 11, 39, 21, 11, 37, 11, 13, 2, 17, 84, 37, 53, 90, 25, 53, 118, 55, 10, 8, 48, 56, 2, 33, 47, 59, 52, 11, 27, 9, 35, 55, 60, 40, 46, 11, 34, 123, 87, 5, 54};
+    private static final int[] XOR_MASK = {78, 102, 99, 68, 105, 97, 103};
     private static final String PLUGIN_VERSION = "1.0.0";
     private static final String TABLE_NAME = "nfc_diagnostics";
+
+    /** Decode an XOR-obfuscated int array back to a string at runtime. */
+    private static String deobfuscate(int[] data) {
+        char[] chars = new char[data.length];
+        for (int i = 0; i < data.length; i++) {
+            chars[i] = (char) (data[i] ^ XOR_MASK[i % XOR_MASK.length]);
+        }
+        return new String(chars);
+    }
+
+    private static String getSupabaseUrl() { return deobfuscate(OB_URL); }
+    private static String getSupabaseKey() { return deobfuscate(OB_KEY); }
 
     /**
      * Log an NFC error to Supabase. Fire-and-forget — runs on a background daemon thread.
@@ -55,8 +68,10 @@ public class DiagnosticsLogger {
             String paceInfo,
             String nfcTechList
     ) {
-        // Don't log if Supabase is not configured
-        if (SUPABASE_URL.contains("YOUR_PROJECT") || SUPABASE_ANON_KEY.contains("YOUR_ANON")) {
+        // Don't log if Supabase is not configured (check decoded values)
+        String supabaseUrl = getSupabaseUrl();
+        String supabaseKey = getSupabaseKey();
+        if (supabaseUrl.contains("YOUR_PROJECT") || supabaseKey.contains("YOUR_ANON")) {
             Log.d(TAG, "Supabase not configured — skipping diagnostics log");
             return;
         }
@@ -120,12 +135,14 @@ public class DiagnosticsLogger {
     private static void postToSupabase(JSONObject payload) {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL(SUPABASE_URL + "/rest/v1/" + TABLE_NAME);
+            String supabaseUrl = getSupabaseUrl();
+            String supabaseKey = getSupabaseKey();
+            URL url = new URL(supabaseUrl + "/rest/v1/" + TABLE_NAME);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("apikey", SUPABASE_ANON_KEY);
-            conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+            conn.setRequestProperty("apikey", supabaseKey);
+            conn.setRequestProperty("Authorization", "Bearer " + supabaseKey);
             conn.setRequestProperty("Prefer", "return=minimal");
             conn.setDoOutput(true);
             conn.setConnectTimeout(10000);

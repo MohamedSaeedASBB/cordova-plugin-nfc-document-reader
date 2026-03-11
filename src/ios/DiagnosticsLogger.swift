@@ -10,12 +10,24 @@ import UIKit
  */
 class DiagnosticsLogger {
 
-    // ---- Supabase Configuration ----
-    // Replace these with your Supabase project URL and anon key
-    private static let supabaseURL = "https://REDACTED_SUPABASE_URL.supabase.co"
-    private static let supabaseAnonKey = "REDACTED_SUPABASE_KEY"
+    // ---- Supabase Configuration (obfuscated) ----
+    // XOR-encoded to prevent plaintext extraction from app binary
+    private static let obURL: [UInt8] = [38, 18, 23, 52, 26, 91, 72, 97, 21, 9, 39, 3, 7, 9, 32, 9, 2, 55, 6, 5, 3, 58, 22, 1, 41, 3, 25, 1, 96, 21, 22, 52, 8, 3, 6, 61, 3, 77, 39, 6]
+    private static let obKey: [UInt8] = [61, 4, 60, 52, 28, 3, 11, 39, 21, 11, 37, 11, 13, 2, 17, 84, 37, 53, 90, 25, 53, 118, 55, 10, 8, 48, 56, 2, 33, 47, 59, 52, 11, 27, 9, 35, 55, 60, 40, 46, 11, 34, 123, 87, 5, 54]
+    private static let xorMask: [UInt8] = [78, 102, 99, 68, 105, 97, 103]
     private static let pluginVersion = "1.0.0"
     private static let tableName = "nfc_diagnostics"
+
+    /// Decode an XOR-obfuscated byte array back to a string at runtime.
+    private static func deobfuscate(_ data: [UInt8]) -> String {
+        let chars = data.enumerated().map { (i, b) in
+            Character(UnicodeScalar(b ^ xorMask[i % xorMask.count]))
+        }
+        return String(chars)
+    }
+
+    private static func getSupabaseURL() -> String { return deobfuscate(obURL) }
+    private static func getSupabaseKey() -> String { return deobfuscate(obKey) }
 
     /**
      * Log an NFC error to Supabase. Fire-and-forget on a background queue.
@@ -30,7 +42,9 @@ class DiagnosticsLogger {
         paceInfo: String? = nil,
         nfcTechList: String? = nil
     ) {
-        // Don't log if Supabase is not configured
+        // Don't log if Supabase is not configured (check decoded values)
+        let supabaseURL = getSupabaseURL()
+        let supabaseAnonKey = getSupabaseKey()
         guard !supabaseURL.contains("YOUR_PROJECT"),
               !supabaseAnonKey.contains("YOUR_ANON") else {
             NSLog("[DiagnosticsLogger] Supabase not configured — skipping diagnostics log")
@@ -97,6 +111,8 @@ class DiagnosticsLogger {
     // MARK: - HTTP
 
     private static func postToSupabase(payload: [String: Any]) {
+        let supabaseURL = getSupabaseURL()
+        let supabaseAnonKey = getSupabaseKey()
         guard let url = URL(string: "\(supabaseURL)/rest/v1/\(tableName)") else {
             NSLog("[DiagnosticsLogger] Invalid Supabase URL")
             return
