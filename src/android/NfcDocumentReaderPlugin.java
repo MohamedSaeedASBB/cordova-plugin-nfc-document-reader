@@ -2,13 +2,12 @@ package com.nfcdocumentreader;
 
 import android.app.Activity;
 import android.app.Dialog;
-import android.app.PendingIntent;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
-import android.os.Build;
+import android.os.Bundle;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -50,6 +49,16 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfExpiry;
     private String pendingRawMrzInfo = "";
     private boolean nfcReadingActive = false;
+
+    /**
+     * Presence checks interrupt long transactions. A full MRTD read with BAC/PACE takes many
+     * seconds, so the platform is told to wait this long between checks.
+     */
+    private static final int READER_PRESENCE_CHECK_DELAY_MS = 20000;
+
+    /** Guards against a second tag callback starting a concurrent read. */
+    private final Object tagLock = new Object();
+    private boolean tagBeingRead = false;
 
     // Chip-read-then-liveness flow: the document result is held here while the liveness
     // activity runs, then merged with the liveness result and the face comparison.
@@ -374,6 +383,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         nfcCallbackContext = callbackContext;
         nfcReadingActive = true;
+        synchronized (tagLock) {
+            // Clear any flag left by an abandoned read so this one is not ignored.
+            tagBeingRead = false;
+        }
 
         // Show the NFC scan bottom sheet
         showNfcDialog();
@@ -381,13 +394,16 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         // Send initial state
         sendProgressEvent("waitingForTag");
 
-        // Enable foreground dispatch to receive NFC intents
-        enableNfcForegroundDispatch();
+        // Arm tag detection
+        enableNfcReaderMode();
     }
 
     private void cancelRead(CallbackContext callbackContext) {
         nfcReadingActive = false;
-        disableNfcForegroundDispatch();
+        synchronized (tagLock) {
+            tagBeingRead = false;
+        }
+        disableNfcReaderMode();
         dismissNfcDialog();
 
         if (nfcCallbackContext != null) {
@@ -448,7 +464,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         @Override
                         public void onClick(View v) {
                             nfcReadingActive = false;
-                            disableNfcForegroundDispatch();
+                            disableNfcReaderMode();
                             dismissNfcDialog();
 
                             if (nfcCallbackContext != null) {
@@ -512,40 +528,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         });
     }
 
-    // ==================== NFC Intent Handling ====================
+    // ==================== NFC Tag Handling ====================
 
-    @Override
-    public void onNewIntent(Intent intent) {
-        if (!nfcReadingActive || nfcCallbackContext == null) return;
-
-        String action = intent.getAction();
-        if (NfcAdapter.ACTION_TECH_DISCOVERED.equals(action) ||
-            NfcAdapter.ACTION_TAG_DISCOVERED.equals(action)) {
-
-            Tag tag;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag.class);
-            } else {
-                tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
-            }
-
-            if (tag != null) {
-                Log.d(TAG, "NFC tag discovered, starting read...");
-                disableNfcForegroundDispatch();
-
-                // Update dialog: tag found, reading started
-                updateNfcDialogState(
-                    "Reading Document",
-                    "Keep the document still against your phone.\nDo not move it until reading is complete.",
-                    "Connecting...",
-                    "\uD83D\uDD04",  // 🔄
-                    true
-                );
-
-                readTag(tag);
-            }
-        }
-    }
+    // Tags arrive via the reader-mode callback further down, not through onNewIntent. Reader
+    // mode suppresses the platform's tag dispatch entirely, so no ACTION_TECH_DISCOVERED intent
+    // is delivered while a read is armed — and the host activity is never relaunched as a
+    // result, which is what previously reset the WebView to its first screen.
 
     private void readTag(final Tag tag) {
         final CallbackContext callback = nfcCallbackContext;
@@ -650,6 +638,14 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     Log.e(TAG, "Error reading NFC tag: " + e.getMessage(), e);
                     dismissNfcDialog();
                     callback.error("Error reading document: " + e.getMessage());
+                } finally {
+                    // Reader mode is what keeps the RF field and the IsoDep connection alive, so
+                    // it can only be torn down once the transaction is over. A finally block
+                    // covers the early return on the liveness path too.
+                    disableNfcReaderMode();
+                    synchronized (tagLock) {
+                        tagBeingRead = false;
+                    }
                 }
 
                 nfcReadingActive = false;
@@ -690,36 +686,54 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         }
     }
 
-    // ==================== NFC Foreground Dispatch ====================
+    // ==================== NFC Reader Mode ====================
 
-    private void enableNfcForegroundDispatch() {
+    /**
+     * Arms tag detection using reader mode rather than foreground dispatch.
+     *
+     * Foreground dispatch delivers tags by firing a PendingIntent at the host activity. Whether
+     * Android reuses the running instance depends on that activity's launchMode, which the plugin
+     * does not control — under some Cordova hosts (OutSystems MABS among them) a second instance
+     * is created instead, the WebView reloads index.html, and the web app appears to navigate
+     * back to its first screen. The same relaunch means onNewIntent never fires on the instance
+     * that started the read, so the tag is silently dropped as well.
+     *
+     * Reader mode has no Intent and no PendingIntent: tags arrive on a callback, so nothing can
+     * relaunch or reload anything. It also suppresses the platform's own tag handling while
+     * active, which stops the OS chime and any "New tag collected" UI.
+     */
+    private void enableNfcReaderMode() {
         final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
 
-        // MUST run on UI thread — enableForegroundDispatch throws if called from background
+        // MUST run on UI thread — enableReaderMode requires a resumed activity.
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Intent intent = new Intent(activity, activity.getClass())
-                        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        flags |= PendingIntent.FLAG_MUTABLE;
-                    }
-                    PendingIntent pendingIntent = PendingIntent.getActivity(activity, 0, intent, flags);
-                    String[][] techList = new String[][]{new String[]{"android.nfc.tech.IsoDep"}};
+                    // Passport/ID chips are ISO-DEP over NFC-A or NFC-B. Skipping the NDEF check
+                    // avoids the platform probing the card before we get to it.
+                    int flags = NfcAdapter.FLAG_READER_NFC_A
+                        | NfcAdapter.FLAG_READER_NFC_B
+                        | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
+                        | NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS;
 
-                    nfcAdapter.enableForegroundDispatch(activity, pendingIntent, null, techList);
-                    Log.d(TAG, "NFC foreground dispatch enabled");
+                    Bundle extras = new Bundle();
+                    // Presence checks interrupt long transactions; a full MRTD read with BAC/PACE
+                    // takes many seconds, so keep the platform from pinging mid-read.
+                    extras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY,
+                        READER_PRESENCE_CHECK_DELAY_MS);
+
+                    nfcAdapter.enableReaderMode(activity, readerCallback, flags, extras);
+                    Log.d(TAG, "NFC reader mode enabled");
                 } catch (Exception e) {
-                    Log.e(TAG, "Error enabling NFC foreground dispatch: " + e.getMessage());
+                    Log.e(TAG, "Error enabling NFC reader mode: " + e.getMessage());
                 }
             }
         });
     }
 
-    private void disableNfcForegroundDispatch() {
+    private void disableNfcReaderMode() {
         final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
 
@@ -728,14 +742,45 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             @Override
             public void run() {
                 try {
-                    nfcAdapter.disableForegroundDispatch(activity);
-                    Log.d(TAG, "NFC foreground dispatch disabled");
+                    nfcAdapter.disableReaderMode(activity);
+                    Log.d(TAG, "NFC reader mode disabled");
                 } catch (Exception e) {
-                    Log.e(TAG, "Error disabling NFC foreground dispatch: " + e.getMessage());
+                    Log.e(TAG, "Error disabling NFC reader mode: " + e.getMessage());
                 }
             }
         });
     }
+
+    /**
+     * Called on a binder thread, not the UI thread.
+     *
+     * Reader mode is deliberately left enabled for the duration of the read: unlike foreground
+     * dispatch, it is what keeps the RF field and the IsoDep connection alive, so disabling it
+     * here would sever the transaction. It is torn down in readTag's finally block instead.
+     */
+    private final NfcAdapter.ReaderCallback readerCallback = new NfcAdapter.ReaderCallback() {
+        @Override
+        public void onTagDiscovered(Tag tag) {
+            if (tag == null) return;
+
+            synchronized (tagLock) {
+                if (!nfcReadingActive || nfcCallbackContext == null || tagBeingRead) return;
+                tagBeingRead = true;
+            }
+
+            Log.d(TAG, "NFC tag discovered, starting read...");
+
+            updateNfcDialogState(
+                "Reading Document",
+                "Keep the document still against your phone.\nDo not move it until reading is complete.",
+                "Connecting...",
+                "\uD83D\uDD04",  // 🔄
+                true
+            );
+
+            readTag(tag);
+        }
+    };
 
     // ==================== Lifecycle ====================
 
@@ -743,14 +788,14 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
         if (nfcReadingActive) {
-            enableNfcForegroundDispatch();
+            enableNfcReaderMode();
         }
     }
 
     @Override
     public void onPause(boolean multitasking) {
         super.onPause(multitasking);
-        disableNfcForegroundDispatch();
+        disableNfcReaderMode();
     }
 
     @Override
