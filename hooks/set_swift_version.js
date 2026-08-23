@@ -3,13 +3,21 @@
 /**
  * Hook script to:
  * 1. Set SWIFT_VERSION build setting in the Xcode project
- * 2. Configure the bridging header with Cordova imports
- * 3. Ensure NFC TAG entitlement is present in all entitlements files
+ * 2. Raise IPHONEOS_DEPLOYMENT_TARGET to the ML Kit minimum
+ * 3. Configure the bridging header with Cordova imports
+ * 4. Ensure NFC TAG entitlement is present in all entitlements files
  */
 
 var fs = require('fs');
 var path = require('path');
 var plist = require('plist');
+
+/**
+ * ML Kit iOS 7.0.0 and later require iOS 15.5 (and Xcode 15.3). The liveness check depends on
+ * GoogleMLKit/FaceDetection, so the app cannot build below this. Every NFC-capable iPhone
+ * (6s and later) can run 15.5, so nothing that could use the chip reader is excluded.
+ */
+var MIN_IOS_DEPLOYMENT_TARGET = '15.5';
 
 module.exports = function (context) {
     var platformRoot = path.join(context.opts.projectRoot, 'platforms', 'ios');
@@ -52,9 +60,12 @@ module.exports = function (context) {
         console.log('ios_setup_hook: Updated SWIFT_VERSION to 5.0.');
     }
 
+    // ========== 2. Raise IPHONEOS_DEPLOYMENT_TARGET ==========
+    pbxproj = raiseDeploymentTarget(pbxproj);
+
     fs.writeFileSync(pbxprojPath, pbxproj, 'utf8');
 
-    // ========== 2. Bridging Header ==========
+    // ========== 3. Bridging Header ==========
     var bridgingHeaderName = appName + '-Bridging-Header.h';
     var bridgingHeaderPath = path.join(platformRoot, bridgingHeaderName);
 
@@ -94,9 +105,50 @@ module.exports = function (context) {
         console.log('ios_setup_hook: Added SWIFT_OBJC_BRIDGING_HEADER to build settings.');
     }
 
-    // ========== 3. NFC Entitlements ==========
+    // ========== 4. NFC Entitlements ==========
     ensureNfcEntitlement(platformRoot, appName);
 };
+
+/**
+ * Raises every IPHONEOS_DEPLOYMENT_TARGET to MIN_IOS_DEPLOYMENT_TARGET.
+ *
+ * Only ever raises — a project already targeting something higher is left alone, so this hook
+ * cannot silently walk an app's minimum backwards.
+ */
+function raiseDeploymentTarget(pbxproj) {
+    var pattern = /IPHONEOS_DEPLOYMENT_TARGET = ([^;]*);/g;
+    var minimum = parseFloat(MIN_IOS_DEPLOYMENT_TARGET);
+    var raised = 0;
+    var kept = 0;
+
+    if (pbxproj.indexOf('IPHONEOS_DEPLOYMENT_TARGET') === -1) {
+        pbxproj = pbxproj.replace(/SWIFT_VERSION = 5\.0;/g,
+            'SWIFT_VERSION = 5.0;\n\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = ' + MIN_IOS_DEPLOYMENT_TARGET + ';');
+        console.log('ios_setup_hook: Set IPHONEOS_DEPLOYMENT_TARGET = ' + MIN_IOS_DEPLOYMENT_TARGET +
+            ' (required by ML Kit face detection).');
+        return pbxproj;
+    }
+
+    pbxproj = pbxproj.replace(pattern, function (match, current) {
+        var value = parseFloat(current);
+        if (isNaN(value) || value < minimum) {
+            raised++;
+            return 'IPHONEOS_DEPLOYMENT_TARGET = ' + MIN_IOS_DEPLOYMENT_TARGET + ';';
+        }
+        kept++;
+        return match;
+    });
+
+    if (raised > 0) {
+        console.log('ios_setup_hook: Raised IPHONEOS_DEPLOYMENT_TARGET to ' + MIN_IOS_DEPLOYMENT_TARGET +
+            ' in ' + raised + ' configuration(s) (required by ML Kit face detection).');
+    }
+    if (kept > 0) {
+        console.log('ios_setup_hook: Left ' + kept + ' configuration(s) at their existing, higher deployment target.');
+    }
+
+    return pbxproj;
+}
 
 /**
  * Find all entitlements plist files and ensure TAG + NDEF are in

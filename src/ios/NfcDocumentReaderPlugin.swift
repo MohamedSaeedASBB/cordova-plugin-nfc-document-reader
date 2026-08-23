@@ -1,5 +1,6 @@
 import Foundation
 import CoreNFC
+import UIKit
 
 #if canImport(Cordova)
 import Cordova
@@ -10,10 +11,18 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     private var nfcCallbackId: String?
     private var mrzScanCallbackId: String?
+    private var livenessCallbackId: String?
     private var documentReader: NfcDocumentReaderWrapper?
     private var nfcBottomSheet: NfcScanBottomSheet?
     private var dgReadCount: Int = 0
     private var totalDGs: Int = 3
+
+    // Chip-read-then-liveness flow: the document result is held here while the liveness
+    // screen runs, then merged with the liveness result and the face comparison.
+    private var pendingDocumentResult: [String: Any]?
+    private var pendingLivenessOptions: LivenessOptions?
+    private var pendingFaceMatchConfig: [String: Any]?
+    private let comparisonQueue = DispatchQueue(label: "liveness.comparison.queue")
 
     // MARK: - Plugin Lifecycle
 
@@ -63,6 +72,94 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
     }
 
+    // MARK: - checkLiveness
+
+    @objc(checkLiveness:)
+    func checkLiveness(command: CDVInvokedUrlCommand) {
+        livenessCallbackId = command.callbackId
+
+        let options = command.arguments.first as? [String: Any] ?? [:]
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let livenessVC = LivenessCameraViewController()
+            livenessVC.options = LivenessOptions.from(options)
+            livenessVC.delegate = self
+            livenessVC.modalPresentationStyle = .fullScreen
+            self.viewController.present(livenessVC, animated: true)
+        }
+    }
+
+    // MARK: - Chip read + liveness + on-device face match
+
+    private func presentLivenessForChipRead() {
+        let livenessVC = LivenessCameraViewController()
+        livenessVC.options = pendingLivenessOptions ?? LivenessOptions.from([:])
+        livenessVC.delegate = self
+        livenessVC.modalPresentationStyle = .fullScreen
+        viewController.present(livenessVC, animated: true)
+    }
+
+    /// Merges the chip result, the liveness result and the on-device face comparison into the
+    /// single payload the app forwards to the back office.
+    private func completeChipReadWithLiveness(_ livenessResult: [String: Any]) {
+        guard let callbackId = nfcCallbackId,
+              var documentResult = pendingDocumentResult else { return }
+
+        let faceMatchConfig = pendingFaceMatchConfig
+        let imageOptions = (pendingLivenessOptions ?? LivenessOptions.from([:])).imageOptions()
+
+        // Clear the holding state before the async work so a second read cannot see it.
+        pendingDocumentResult = nil
+        pendingLivenessOptions = nil
+        pendingFaceMatchConfig = nil
+        nfcCallbackId = nil
+
+        // ML Kit's results(in:) raises on the main thread, and TFLite inference is heavy.
+        comparisonQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            documentResult["liveness"] = livenessResult
+
+            let documentPortrait = Self.decodeBase64Image(documentResult["faceImageBase64"])
+            var outcome = FaceComparison.compare(documentPortrait: documentPortrait,
+                                                 livenessFaceBase64: livenessResult["faceImageBase64"] as? String,
+                                                 imageOptions: imageOptions)
+
+            let matcher = FaceMatcher(config: FaceMatcher.Config.from(faceMatchConfig))
+            let match = matcher.match(documentPortrait: documentPortrait,
+                                      documentFaceBox: outcome.documentFaceBox,
+                                      livenessPortrait: outcome.livenessPortrait,
+                                      livenessFaceBox: outcome.livenessFaceBox)
+            outcome.json["match"] = match.dictionary
+
+            documentResult["faceComparison"] = outcome.json
+
+            let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: documentResult)
+            pluginResult?.keepCallback = false
+            self.commandDelegate.send(pluginResult, callbackId: callbackId)
+        }
+    }
+
+    private func failChipReadLiveness(_ message: String) {
+        pendingDocumentResult = nil
+        pendingLivenessOptions = nil
+        pendingFaceMatchConfig = nil
+
+        guard let callbackId = nfcCallbackId else { return }
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: message)
+        commandDelegate.send(pluginResult, callbackId: callbackId)
+        nfcCallbackId = nil
+    }
+
+    private static func decodeBase64Image(_ value: Any?) -> UIImage? {
+        guard let base64 = value as? String, !base64.isEmpty,
+              let data = Data(base64Encoded: base64) else {
+            return nil
+        }
+        return UIImage(data: data)
+    }
+
     // MARK: - readNFC
 
     @objc(readNFC:)
@@ -83,6 +180,19 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
 
         let mrzFormat = mrzData["format"] as? String ?? "TD1"
+
+        // Optional second argument: { liveness: ..., faceMatch: {...} }.
+        // Absent means chip-read only, so existing callers are unaffected.
+        pendingLivenessOptions = nil
+        pendingFaceMatchConfig = nil
+        if command.arguments.count > 1, let readOptions = command.arguments[1] as? [String: Any] {
+            if let enabled = readOptions["liveness"] as? Bool, enabled {
+                pendingLivenessOptions = LivenessOptions.from([:])
+            } else if let livenessOptions = readOptions["liveness"] as? [String: Any] {
+                pendingLivenessOptions = LivenessOptions.from(livenessOptions)
+            }
+            pendingFaceMatchConfig = readOptions["faceMatch"] as? [String: Any]
+        }
 
         nfcCallbackId = command.callbackId
         dgReadCount = 0
@@ -153,6 +263,19 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                         self.nfcBottomSheet?.showSuccess()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             self.dismissNfcBottomSheet()
+                        }
+
+                        if self.pendingLivenessOptions != nil {
+                            // Chip read done — now prove the holder is present and compare their
+                            // face against the portrait we just read off the chip. The readNFC
+                            // callback deliberately stays open until that finishes.
+                            self.pendingDocumentResult = result as? [String: Any]
+                            self.sendProgressEvent(state: "livenessCheck")
+                            self.documentReader = nil
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                                self.presentLivenessForChipRead()
+                            }
+                            return
                         }
 
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
@@ -273,5 +396,42 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "MRZ scan cancelled")
         commandDelegate.send(pluginResult, callbackId: callbackId)
         mrzScanCallbackId = nil
+    }
+}
+
+// MARK: - LivenessCameraViewControllerDelegate
+
+extension NfcDocumentReaderPlugin: LivenessCameraViewControllerDelegate {
+
+    func livenessCameraViewController(_ controller: LivenessCameraViewController,
+                                      didComplete result: [String: Any]) {
+        controller.dismiss(animated: true)
+
+        // Chip-read flow: fold the liveness result into the document result and compare.
+        if pendingDocumentResult != nil {
+            completeChipReadWithLiveness(result)
+            return
+        }
+
+        guard let callbackId = livenessCallbackId else { return }
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
+        pluginResult?.keepCallback = false
+        commandDelegate.send(pluginResult, callbackId: callbackId)
+        livenessCallbackId = nil
+    }
+
+    func livenessCameraViewController(_ controller: LivenessCameraViewController,
+                                      didFailWith code: String, message: String) {
+        controller.dismiss(animated: true)
+
+        if pendingDocumentResult != nil {
+            failChipReadLiveness(message)
+            return
+        }
+
+        guard let callbackId = livenessCallbackId else { return }
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: message)
+        commandDelegate.send(pluginResult, callbackId: callbackId)
+        livenessCallbackId = nil
     }
 }

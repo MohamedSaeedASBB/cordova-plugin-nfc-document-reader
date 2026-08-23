@@ -34,10 +34,21 @@
             <activity android:name="com.nfcdocumentreader.MrzCameraActivity"
                       android:theme="@style/Theme.AppCompat.NoActionBar"
                       android:screenOrientation="portrait" />
+            <activity android:name="com.nfcdocumentreader.LivenessCameraActivity"
+                      android:theme="@style/Theme.AppCompat.NoActionBar"
+                      android:screenOrientation="portrait" />
         </config-file>
+
+        <!-- face-match model: uncomment once src/models/mobilefacenet.tflite is present.
+             Cordova fails plugin install if a resource-file src does not exist, which is why
+             this is commented rather than live. See src/models/README.md.
+        <resource-file src="src/models/mobilefacenet.tflite"
+                       target="app/src/main/assets/mobilefacenet.tflite" />
+        -->
 
         <resource-file src="src/android/nfc_tech_filter.xml" target="res/xml/nfc_tech_filter.xml" />
         <resource-file src="src/android/activity_mrz_camera.xml" target="res/layout/activity_mrz_camera.xml" />
+        <resource-file src="src/android/activity_liveness_camera.xml" target="res/layout/activity_liveness_camera.xml" />
         <resource-file src="src/android/dialog_nfc_scan.xml" target="res/layout/dialog_nfc_scan.xml" />
 
         <source-file src="src/android/NfcDocumentReaderPlugin.java" target-dir="src/com/nfcdocumentreader" />
@@ -47,6 +58,12 @@
         <source-file src="src/android/MrzCameraActivity.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DocumentData.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DiagnosticsLogger.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/LivenessDetector.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/LivenessOptions.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/LivenessCameraActivity.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/ImageCompressor.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/FaceComparison.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/FaceMatcher.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />
@@ -54,10 +71,16 @@
         <framework src="org.bouncycastle:bcprov-jdk18on:1.78" />
         <framework src="edu.ucar:jj2000:5.2" />
         <framework src="com.google.mlkit:text-recognition:16.0.0" />
+        <!-- Liveness: ML Kit face detection (bundled model — no Play Services download needed) -->
+        <framework src="com.google.mlkit:face-detection:16.1.7" />
         <framework src="androidx.camera:camera-camera2:1.3.1" />
+        <framework src="androidx.camera:camera-core:1.3.1" />
         <framework src="androidx.camera:camera-lifecycle:1.3.1" />
         <framework src="androidx.camera:camera-view:1.3.1" />
         <framework src="androidx.appcompat:appcompat:1.6.1" />
+        <!-- On-device 1:1 face match. The .tflite model is supplied by the app, not bundled
+             here: the model and its threshold are a biometric-governance decision. -->
+        <framework src="org.tensorflow:tensorflow-lite:2.14.0" />
 
     </platform>
 
@@ -72,6 +95,10 @@
                 <param name="ios-package" value="NfcDocumentReaderPlugin" />
             </feature>
             <preference name="UseSwiftLanguageVersion" value="5" />
+            <!-- ML Kit face detection (liveness) requires iOS 15.5 / Xcode 15.3. Set here so
+                 CocoaPods resolves against 15.5 during pod install; hooks/set_swift_version.js
+                 also raises IPHONEOS_DEPLOYMENT_TARGET in the generated Xcode project. -->
+            <preference name="deployment-target" value="15.5" />
         </config-file>
 
         <config-file target="*-Info.plist" parent="NFCReaderUsageDescription">
@@ -86,7 +113,7 @@
         </config-file>
 
         <config-file target="*-Info.plist" parent="NSCameraUsageDescription">
-            <string>This app requires camera access to scan the MRZ on your document.</string>
+            <string>This app requires camera access to scan the MRZ on your document and to confirm you are physically present.</string>
         </config-file>
 
         <source-file src="src/ios/NfcDocumentReaderPlugin.swift" />
@@ -95,13 +122,37 @@
         <source-file src="src/ios/MrzCameraViewController.swift" />
         <source-file src="src/ios/MrzOcrProcessor.swift" />
         <source-file src="src/ios/DiagnosticsLogger.swift" />
+        <source-file src="src/ios/LivenessDetector.swift" />
+        <source-file src="src/ios/LivenessOptions.swift" />
+        <source-file src="src/ios/LivenessCameraViewController.swift" />
+        <source-file src="src/ios/ImageCompressor.swift" />
+        <source-file src="src/ios/FaceComparison.swift" />
+        <source-file src="src/ios/FaceMatcher.swift" />
 
+        <!-- face-match model: uncomment once src/models/mobilefacenet.tflite is present.
+             Cordova fails plugin install if a resource-file src does not exist, which is why
+             this is commented rather than live. See src/models/README.md.
+        <resource-file src="src/models/mobilefacenet.tflite" />
+        -->
+
+        <!--
+            ML Kit iOS 7.0.0 and later require iOS 15.5 and Xcode 15.3. That floor is applied in
+            two places, because CocoaPods and the Xcode project read it at different moments:
+            the deployment-target preference above (for pod install) and
+            hooks/set_swift_version.js (for the generated project's build settings).
+
+            Every NFC-capable iPhone (6s and later) can run iOS 15.5, so this drops no device
+            that could use the chip reader — but it is an app-wide minimum, so if the app
+            declares a lower target anywhere else, that will now be overridden.
+        -->
         <podspec>
             <config>
                 <source url="https://cdn.cocoapods.org/" />
             </config>
             <pods use-frameworks="true">
                 <pod name="NFCPassportReader" spec="~> 1.1.9" />
+                <pod name="GoogleMLKit/FaceDetection" spec="~> 8.0" />
+                <pod name="TensorFlowLiteSwift" spec="~> 2.14" />
             </pods>
         </podspec>
 

@@ -36,10 +36,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
     private static final String TAG = "NfcDocReaderPlugin";
     private static final int REQUEST_MRZ_SCAN = 9001;
+    private static final int REQUEST_LIVENESS = 9002;
 
     private NfcAdapter nfcAdapter;
     private CallbackContext nfcCallbackContext;
     private CallbackContext mrzScanCallbackContext;
+    private CallbackContext livenessCallbackContext;
     private NfcDocumentReader documentReader;
 
     // MRZ data for BAC authentication
@@ -48,6 +50,13 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfExpiry;
     private String pendingRawMrzInfo = "";
     private boolean nfcReadingActive = false;
+
+    // Chip-read-then-liveness flow: the document result is held here while the liveness
+    // activity runs, then merged with the liveness result and the face comparison.
+    private JSONObject pendingDocumentJson;
+    private android.graphics.Bitmap pendingDocumentPortrait;
+    private String pendingLivenessOptionsJson;
+    private JSONObject pendingFaceMatchConfig;
 
     // NFC scan bottom sheet dialog
     private Dialog nfcDialog;
@@ -77,6 +86,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 return true;
             case "scanMRZ":
                 scanMRZ(args, callbackContext);
+                return true;
+            case "checkLiveness":
+                checkLiveness(args, callbackContext);
                 return true;
             case "readNFC":
                 readNFC(args, callbackContext);
@@ -123,38 +135,187 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
+    // ==================== checkLiveness ====================
+
+    private void checkLiveness(JSONArray args, CallbackContext callbackContext) {
+        livenessCallbackContext = callbackContext;
+        Activity activity = cordova.getActivity();
+
+        // Any result left over from an abandoned session must not leak into this one.
+        LivenessCameraActivity.clearResult();
+
+        Intent intent = new Intent(activity, LivenessCameraActivity.class);
+        if (args.length() > 0 && !args.isNull(0)) {
+            try {
+                intent.putExtra(LivenessCameraActivity.EXTRA_OPTIONS, args.getJSONObject(0).toString());
+            } catch (JSONException e) {
+                Log.w(TAG, "Error parsing checkLiveness options: " + e.getMessage());
+            }
+        }
+
+        cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
+    }
+
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent intent) {
-        if (requestCode == REQUEST_MRZ_SCAN) {
-            if (mrzScanCallbackContext == null) return;
+        if (requestCode == REQUEST_LIVENESS) {
+            onLivenessResult(resultCode, intent);
+        } else if (requestCode == REQUEST_MRZ_SCAN) {
+            onMrzScanResult(resultCode, intent);
+        }
+    }
 
-            if (resultCode == Activity.RESULT_OK && intent != null) {
+    private void onLivenessResult(int resultCode, Intent intent) {
+        // The payload carries base64 JPEGs, which are too large for Intent extras — the activity
+        // hands it over in memory instead. Consuming clears it so the biometric data does not
+        // outlive the callback.
+        JSONObject result = LivenessCameraActivity.consumeResult();
+        String errorMsg = intent != null ? intent.getStringExtra("error") : null;
+        boolean ok = resultCode == Activity.RESULT_OK && result != null;
+
+        if (pendingDocumentJson != null) {
+            completeChipReadWithLiveness(ok, result, errorMsg);
+            return;
+        }
+
+        if (livenessCallbackContext == null) return;
+
+        if (ok) {
+            livenessCallbackContext.success(result);
+        } else {
+            livenessCallbackContext.error(errorMsg != null ? errorMsg : "Liveness check cancelled");
+        }
+        livenessCallbackContext = null;
+    }
+
+    // ==================== Chip read + liveness + on-device face match ====================
+
+    private void launchLivenessForChipRead() {
+        Activity activity = cordova.getActivity();
+        LivenessCameraActivity.clearResult();
+
+        Intent intent = new Intent(activity, LivenessCameraActivity.class);
+        intent.putExtra(LivenessCameraActivity.EXTRA_OPTIONS, pendingLivenessOptionsJson);
+        cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
+    }
+
+    /**
+     * Merges the chip result, the liveness result and the on-device face comparison into the
+     * single payload the app forwards to the back office.
+     */
+    private void completeChipReadWithLiveness(final boolean livenessOk,
+                                              final JSONObject livenessResult,
+                                              final String errorMsg) {
+        final CallbackContext callback = nfcCallbackContext;
+        final JSONObject documentJson = pendingDocumentJson;
+        final android.graphics.Bitmap documentPortrait = pendingDocumentPortrait;
+        final JSONObject faceMatchConfig = pendingFaceMatchConfig;
+
+        // Clear the holding fields before the async work so a second read cannot see stale state.
+        pendingDocumentJson = null;
+        pendingDocumentPortrait = null;
+        nfcCallbackContext = null;
+
+        if (callback == null) return;
+
+        if (!livenessOk) {
+            callback.error(errorMsg != null ? errorMsg : "Liveness check cancelled");
+            return;
+        }
+
+        // Face detection on stills blocks, and TFLite inference is heavy — never on the UI thread.
+        cordova.getThreadPool().execute(new Runnable() {
+            @Override
+            public void run() {
                 try {
-                    JSONObject result = new JSONObject();
-                    result.put("documentNumber", intent.getStringExtra("documentNumber"));
-                    result.put("dateOfBirth", intent.getStringExtra("dateOfBirth"));
-                    result.put("dateOfExpiry", intent.getStringExtra("dateOfExpiry"));
-                    result.put("format", intent.getStringExtra("format"));
+                    documentJson.put("liveness", livenessResult);
 
-                    String[] rawLines = intent.getStringArrayExtra("rawMrzLines");
-                    JSONArray linesArray = new JSONArray();
-                    if (rawLines != null) {
-                        for (String line : rawLines) {
-                            linesArray.put(line);
+                    LivenessOptions livenessOptions =
+                            LivenessOptions.fromJson(pendingLivenessOptionsJson);
+                    FaceComparison.Outcome outcome = FaceComparison.compare(
+                            documentPortrait,
+                            livenessResult.optString("faceImageBase64", null),
+                            livenessOptions.imageOptions());
+
+                    try {
+                        // ---- On-device 1:1 match ----
+                        FaceMatcher.Config matchConfig = parseFaceMatchConfig(faceMatchConfig);
+                        FaceMatcher matcher = new FaceMatcher(cordova.getActivity(), matchConfig);
+                        FaceMatcher.MatchResult match = matcher.match(
+                                documentPortrait, outcome.documentFaceBox,
+                                outcome.livenessPortrait, outcome.livenessFaceBox);
+
+                        JSONObject matchJson = new JSONObject();
+                        matchJson.put("status", match.status);
+                        matchJson.put("similarity", match.similarity != null
+                                ? match.similarity : JSONObject.NULL);
+                        matchJson.put("threshold", match.threshold != null
+                                ? match.threshold : JSONObject.NULL);
+                        matchJson.put("reason", match.reason != null ? match.reason : JSONObject.NULL);
+                        matchJson.put("onDevice", true);
+                        outcome.json.put("match", matchJson);
+                    } finally {
+                        if (outcome.livenessPortrait != null) {
+                            outcome.livenessPortrait.recycle();
                         }
                     }
-                    result.put("rawMrzLines", linesArray);
 
-                    mrzScanCallbackContext.success(result);
-                } catch (JSONException e) {
-                    mrzScanCallbackContext.error("Error building MRZ result: " + e.getMessage());
+                    documentJson.put("faceComparison", outcome.json);
+
+                    PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, documentJson);
+                    pluginResult.setKeepCallback(false);
+                    callback.sendPluginResult(pluginResult);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error building liveness comparison result: " + e.getMessage(), e);
+                    callback.error("The document was read but the face comparison failed. Please try again.");
                 }
-            } else {
-                String errorMsg = intent != null ? intent.getStringExtra("error") : "MRZ scan cancelled";
-                mrzScanCallbackContext.error(errorMsg != null ? errorMsg : "MRZ scan cancelled");
             }
-            mrzScanCallbackContext = null;
+        });
+    }
+
+    private FaceMatcher.Config parseFaceMatchConfig(JSONObject json) {
+        FaceMatcher.Config config = new FaceMatcher.Config();
+        if (json == null) {
+            return config;
         }
+        config.modelAsset = json.optString("modelAsset", null);
+        config.inputSize = json.optInt("inputSize", config.inputSize);
+        config.embeddingSize = json.optInt("embeddingSize", config.embeddingSize);
+        if (json.has("threshold") && !json.isNull("threshold")) {
+            config.threshold = json.optDouble("threshold");
+        }
+        return config;
+    }
+
+    private void onMrzScanResult(int resultCode, Intent intent) {
+        if (mrzScanCallbackContext == null) return;
+
+        if (resultCode == Activity.RESULT_OK && intent != null) {
+            try {
+                JSONObject result = new JSONObject();
+                result.put("documentNumber", intent.getStringExtra("documentNumber"));
+                result.put("dateOfBirth", intent.getStringExtra("dateOfBirth"));
+                result.put("dateOfExpiry", intent.getStringExtra("dateOfExpiry"));
+                result.put("format", intent.getStringExtra("format"));
+
+                String[] rawLines = intent.getStringArrayExtra("rawMrzLines");
+                JSONArray linesArray = new JSONArray();
+                if (rawLines != null) {
+                    for (String line : rawLines) {
+                        linesArray.put(line);
+                    }
+                }
+                result.put("rawMrzLines", linesArray);
+
+                mrzScanCallbackContext.success(result);
+            } catch (JSONException e) {
+                mrzScanCallbackContext.error("Error building MRZ result: " + e.getMessage());
+            }
+        } else {
+            String errorMsg = intent != null ? intent.getStringExtra("error") : "MRZ scan cancelled";
+            mrzScanCallbackContext.error(errorMsg != null ? errorMsg : "MRZ scan cancelled");
+        }
+        mrzScanCallbackContext = null;
     }
 
     // ==================== readNFC ====================
@@ -170,6 +331,27 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         }
 
         pendingRawMrzInfo = "";
+        pendingLivenessOptionsJson = null;
+        pendingFaceMatchConfig = null;
+
+        // Optional second argument: { liveness: {...}, faceMatch: {...} }.
+        // Absent means chip-read only, so existing callers are unaffected.
+        if (args.length() > 1 && !args.isNull(1)) {
+            try {
+                JSONObject readOptions = args.getJSONObject(1);
+                if (readOptions.optBoolean("liveness", false)) {
+                    pendingLivenessOptionsJson = "{}";
+                } else if (readOptions.has("liveness") && !readOptions.isNull("liveness")) {
+                    pendingLivenessOptionsJson = readOptions.getJSONObject("liveness").toString();
+                }
+                if (readOptions.has("faceMatch") && !readOptions.isNull("faceMatch")) {
+                    pendingFaceMatchConfig = readOptions.getJSONObject("faceMatch");
+                }
+            } catch (JSONException e) {
+                Log.w(TAG, "Error parsing readNFC options: " + e.getMessage());
+            }
+        }
+
         try {
             JSONObject mrzData = args.getJSONObject(0);
             pendingDocumentNumber = mrzData.getString("documentNumber");
@@ -415,6 +597,20 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         dismissNfcDialog();
 
                         JSONObject result = data.toJSON();
+
+                        if (pendingLivenessOptionsJson != null) {
+                            // Chip read done — now prove the holder is present and compare their
+                            // face against the portrait we just read off the chip. The readNFC
+                            // callback stays open until that finishes.
+                            pendingDocumentJson = result;
+                            pendingDocumentPortrait = data.faceImage;
+                            // NFC work is over; the callback deliberately stays open.
+                            nfcReadingActive = false;
+                            sendProgressEvent("livenessCheck");
+                            launchLivenessForChipRead();
+                            return;
+                        }
+
                         PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, result);
                         pluginResult.setKeepCallback(false);
                         callback.sendPluginResult(pluginResult);
@@ -562,6 +758,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         nfcReadingActive = false;
         nfcCallbackContext = null;
         mrzScanCallbackContext = null;
+        livenessCallbackContext = null;
+        // Drop any unconsumed liveness payload rather than leaving biometric data in memory.
+        LivenessCameraActivity.clearResult();
         dismissNfcDialog();
         super.onDestroy();
     }
