@@ -1,0 +1,10 @@
+# Install on an approved machine inside the bank's environment.
+#   python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+numpy>=1.24
+Pillow>=10.0
+
+# One TFLite runtime is required. Prefer the small standalone package:
+tflite-runtime>=2.14 ; platform_machine != "arm64" or sys_platform != "darwin"
+# tflite-runtime has no macOS arm64 wheel. On Apple silicon install TensorFlow instead:
+#   pip install "tensorflow>=2.14"
+# calibrate.py accepts either — it tries tflite_runtime first, then tensorflow.lite.
