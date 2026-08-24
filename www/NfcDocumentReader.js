@@ -132,6 +132,11 @@ var NfcDocumentReader = {
      * clone (that is Chip Authentication) and does not prove the holder is the rightful holder
      * (that is the face match). Revocation is not checked on either platform.
      *
+     * Safe to call straight from the scanMRZ callback: Android needs a resumed activity to start
+     * listening for a tag, so if the MRZ camera is still closing, arming is deferred until the
+     * activity is back and then retried. If tag detection cannot be started at all, the error
+     * callback fires — the read never sits on "Ready to scan" with nothing listening.
+     *
      * @param {Function} success - Called with progress events and final result
      * @param {Function} error - Called with error message string
      * @param {Object} mrzData - BAC key material
