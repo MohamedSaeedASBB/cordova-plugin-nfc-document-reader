@@ -75,6 +75,12 @@ var NfcDocumentReader = {
      * Requires MRZ data (document number, date of birth, date of expiry) for BAC authentication.
      *
      * Progress events are sent via the success callback with keepCallback=true:
+     *   { event: "stateChanged", state: "waitingForTag" }    // the sheet is up
+     *   { event: "stateChanged", state: "readerArmed" }      // the platform accepted the binding
+     *                                                        // and a tap can now be detected
+     *   { event: "stateChanged", state: "readerArmFailed" }  // tag detection could not be
+     *                                                        // started; the error callback
+     *                                                        // follows immediately
      *   { event: "stateChanged", state: "connecting" }
      *   { event: "stateChanged", state: "authenticating" }
      *   { event: "stateChanged", state: "readingDataGroup", dgNumber: 1, dgName: "MRZ Information" }
@@ -133,9 +139,12 @@ var NfcDocumentReader = {
      * (that is the face match). Revocation is not checked on either platform.
      *
      * Safe to call straight from the scanMRZ callback: Android needs a resumed activity to start
-     * listening for a tag, so if the MRZ camera is still closing, arming is deferred until the
-     * activity is back and then retried. If tag detection cannot be started at all, the error
-     * callback fires — the read never sits on "Ready to scan" with nothing listening.
+     * listening for a tag, so if the MRZ camera is still closing, arming is retried until the
+     * activity is back. If tag detection cannot be started at all, the error callback fires — the
+     * read never sits on "Ready to scan" with nothing listening.
+     *
+     * Watch for state "readerArmed" to tell the two apart without a device log: no such event
+     * means nothing is listening, however normal the sheet looks.
      *
      * @param {Function} success - Called with progress events and final result
      * @param {Function} error - Called with error message string

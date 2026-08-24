@@ -76,8 +76,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private volatile boolean activityResumed = true;
     private volatile boolean readerModeArmed = false;
     private final Handler armHandler = new Handler(Looper.getMainLooper());
-    private static final int MAX_ARM_ATTEMPTS = 5;
-    private static final int ARM_RETRY_DELAY_MS = 400;
+    private static final int MAX_ARM_ATTEMPTS = 8;
+    private static final int ARM_RETRY_DELAY_MS = 500;
 
     /** Guards against a second tag callback starting a concurrent read. */
     private final Object tagLock = new Object();
@@ -779,10 +779,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (!nfcReadingActive || readerModeArmed) return;
 
         if (!activityResumed) {
-            // Not a failure: onResume will call back in here once the MRZ or liveness activity
-            // has handed the foreground back.
-            Log.d(TAG, "Deferring NFC reader mode until the activity is resumed");
-            return;
+            // Attempt it anyway. onResume re-arms too, but only if the host dispatches plugin
+            // lifecycle callbacks — OutSystems/MABS wraps the Cordova activity, and a flag that
+            // never flips back to true would defer the arm forever and report nothing. The
+            // platform is the authority here: if it really is paused, enableReaderMode throws
+            // and the retry below handles it.
+            Log.d(TAG, "Activity not reported as resumed; attempting to arm anyway");
         }
 
         // MUST run on UI thread — enableReaderMode requires a resumed activity.
@@ -806,7 +808,11 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
                     nfcAdapter.enableReaderMode(activity, readerCallback, flags, extras);
                     readerModeArmed = true;
-                    Log.d(TAG, "NFC reader mode enabled (attempt " + attempt + ")");
+                    Log.d(TAG, "NFC reader mode enabled (attempt " + attempt + ") on "
+                        + activity.getClass().getName());
+                    // Distinct from "waitingForTag", which only means the sheet is up: this says
+                    // the platform accepted the binding and a tap can now be detected.
+                    sendProgressEvent("readerArmed");
                 } catch (Exception e) {
                     Log.w(TAG, "Could not enable NFC reader mode (attempt " + attempt + " of "
                         + MAX_ARM_ATTEMPTS + "): " + e.getClass().getSimpleName() + ": "
@@ -831,6 +837,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * of leaving the sheet up: silence here is what made this look like a dead NFC antenna.
      */
     private void reportArmFailure(Exception cause) {
+        sendProgressEvent("readerArmFailed");
         Log.e(TAG, "NFC reader mode could not be enabled after " + MAX_ARM_ATTEMPTS
             + " attempts; ending the read. Last error: "
             + (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage()
