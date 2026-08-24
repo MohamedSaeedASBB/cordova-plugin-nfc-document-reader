@@ -78,10 +78,30 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private final Handler armHandler = new Handler(Looper.getMainLooper());
     private static final int MAX_ARM_ATTEMPTS = 8;
     private static final int ARM_RETRY_DELAY_MS = 500;
+    /**
+     * A successful arm is not a lasting one. Observed on Android 14 (One UI 6): arming during the
+     * MRZ activity's teardown succeeds, and ~700ms later the framework re-applies reader-mode
+     * state for the newly resumed activity and clears ours —
+     *
+     *   NfcService: setReaderMode: uid=10242, packageName: <app>, flags: 387   (ours)
+     *   NfcService: setReaderMode: uid=1000,  packageName: android, flags: 0   (wiped)
+     *
+     * after which taps are detected by the platform but handled as ordinary NDEF tags and never
+     * reach our callback. Re-applying the binding is idempotent, so it is re-asserted a couple of
+     * times across the transition rather than trusted once.
+     */
+    private static final int REASSERT_COUNT = 3;
+    private static final int REASSERT_DELAY_MS = 900;
 
     /** Guards against a second tag callback starting a concurrent read. */
     private final Object tagLock = new Object();
     private boolean tagBeingRead = false;
+
+    private boolean isTagBeingRead() {
+        synchronized (tagLock) {
+            return tagBeingRead;
+        }
+    }
 
     // Chip-read-then-liveness flow: the document result is held here while the liveness
     // activity runs, then merged with the liveness result and the face comparison.
@@ -764,6 +784,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      */
     private void enableNfcReaderMode() {
         armHandler.removeCallbacksAndMessages(null);
+        // Never trust a previous arm: the framework clears registrations without telling us, so
+        // "already armed" is not a reason to skip re-arming.
+        readerModeArmed = false;
         attemptArmReaderMode(1);
     }
 
@@ -777,6 +800,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (nfcAdapter == null || activity == null) return;
         // No read wants a tag any more, or one is already armed.
         if (!nfcReadingActive || readerModeArmed) return;
+        // A chip is mid-read. Reader mode is what holds the RF field and the IsoDep connection
+        // open, so re-registering it now would sever the transaction we are waiting on.
+        if (isTagBeingRead()) return;
 
         if (!activityResumed) {
             // Attempt it anyway. onResume re-arms too, but only if the host dispatches plugin
@@ -813,6 +839,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     // Distinct from "waitingForTag", which only means the sheet is up: this says
                     // the platform accepted the binding and a tap can now be detected.
                     sendProgressEvent("readerArmed");
+                    scheduleReaderModeReassert(REASSERT_COUNT);
                 } catch (Exception e) {
                     Log.w(TAG, "Could not enable NFC reader mode (attempt " + attempt + " of "
                         + MAX_ARM_ATTEMPTS + "): " + e.getClass().getSimpleName() + ": "
@@ -830,6 +857,45 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 }
             }
         });
+    }
+
+    /**
+     * Re-applies the reader-mode binding a few times after a successful arm, so a framework reset
+     * during the activity transition cannot leave the read deaf. Silent: no progress events, and
+     * no failure reporting — the arm already succeeded once.
+     */
+    private void scheduleReaderModeReassert(final int remaining) {
+        if (remaining <= 0) return;
+        armHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                // Same reason as in attemptArmReaderMode: once a tag is connected, leave the
+                // binding alone. The re-assert exists only to survive the activity transition
+                // before the first tap.
+                if (!nfcReadingActive || isTagBeingRead()) return;
+
+                final Activity activity = cordova.getActivity();
+                if (nfcAdapter == null || activity == null) return;
+
+                try {
+                    int flags = NfcAdapter.FLAG_READER_NFC_A
+                        | NfcAdapter.FLAG_READER_NFC_B
+                        | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
+                        | NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS;
+
+                    Bundle extras = new Bundle();
+                    extras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY,
+                        READER_PRESENCE_CHECK_DELAY_MS);
+
+                    nfcAdapter.enableReaderMode(activity, readerCallback, flags, extras);
+                    readerModeArmed = true;
+                    Log.d(TAG, "NFC reader mode re-asserted (" + remaining + " left)");
+                } catch (Exception e) {
+                    Log.d(TAG, "Reader mode re-assert skipped: " + e.getMessage());
+                }
+                scheduleReaderModeReassert(remaining - 1);
+            }
+        }, REASSERT_DELAY_MS);
     }
 
     /**
@@ -915,9 +981,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
         activityResumed = true;
-        // Covers both the deferred first arm (readNFC called while the MRZ camera was still on
-        // top) and re-arming after the liveness activity hands the foreground back.
-        if (nfcReadingActive && !readerModeArmed) {
+        Log.d(TAG, "onResume (nfcReadingActive=" + nfcReadingActive
+            + ", tagBeingRead=" + isTagBeingRead() + ")");
+        // Unconditionally, not just when !readerModeArmed. Resuming is precisely when the
+        // framework re-applies reader-mode state and drops a binding made while this activity was
+        // not the resumed one, so a stale "armed" flag here is what left the read deaf.
+        if (nfcReadingActive && !isTagBeingRead()) {
             enableNfcReaderMode();
         }
     }
@@ -926,6 +995,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     public void onPause(boolean multitasking) {
         super.onPause(multitasking);
         activityResumed = false;
+        Log.d(TAG, "onPause (nfcReadingActive=" + nfcReadingActive + ")");
         disableNfcReaderMode();
     }
 
