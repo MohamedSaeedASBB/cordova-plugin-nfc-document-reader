@@ -373,8 +373,15 @@ var NfcDocumentReader = {
      *                         frontal, largeEnough, imageWidth, imageHeight },
      *     livenessPortrait: { ...same shape... },
      *     screening: { passed, reasons[], note },   // quality gate, NOT an identity match
+     *
+     *     // The two detected faces, cropped exactly as the matcher consumed them. Present
+     *     // whenever a face was found on that side; a reviewer settling a borderline score needs
+     *     // to see the same pair the score came from.
      *     documentFaceImageBase64, documentFaceImageBytes,
      *     documentFaceImageWidth, documentFaceImageHeight,
+     *     livenessFaceImageBase64, livenessFaceImageBytes,
+     *     livenessFaceImageWidth, livenessFaceImageHeight,
+     *
      *     match: { status, similarity, threshold, reason, onDevice }
      *   }
      *

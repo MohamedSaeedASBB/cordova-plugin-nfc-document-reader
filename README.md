@@ -318,11 +318,33 @@ If you read one field, read `passiveAuthentication.status`:
                       frontal, largeEnough, imageWidth, imageHeight },
   livenessPortrait: { ...same shape... },
   screening: { passed, reasons[], note },        // quality gate, NOT an identity match
+
+  // the two detected faces, cropped as the matcher consumed them
   documentFaceImageBase64, documentFaceImageBytes,
   documentFaceImageWidth, documentFaceImageHeight,
+  livenessFaceImageBase64, livenessFaceImageBytes,
+  livenessFaceImageWidth, livenessFaceImageHeight,
+
   match: { status, similarity, threshold, reason, onDevice }
 }
 ```
+
+### Images in the payload
+
+Every image is base64 JPEG or PNG, ready to drop into an `<img src="data:image/jpeg;base64,…">`.
+
+| Path | What it is |
+|---|---|
+| `faceImageBase64` | full portrait from the chip (DG2) |
+| `signatureImageBase64` | holder's signature from the chip (DG7), when present |
+| `liveness.faceImageBase64` | portrait captured during the liveness check |
+| `faceComparison.documentFaceImageBase64` | **detected face** cropped from the chip portrait |
+| `faceComparison.livenessFaceImageBase64` | **detected face** cropped from the live capture |
+
+The last two are the pair the similarity score was computed from — show those side by side on a
+review screen, not the full frames. Each is accompanied by `…Bytes`, `…Width` and `…Height`, and
+each is present only when a face was actually detected on that side; `faceComparison.screening`
+and the `documentPortrait` / `livenessPortrait` metrics say why if one is missing.
 
 `match.status`:
 

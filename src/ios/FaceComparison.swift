@@ -143,7 +143,10 @@ final class FaceComparison {
                 + "and is NOT a biometric identity match."
         ]
 
-        // ---- The document-side crop the matcher will consume ----
+        // ---- The two detected faces, exactly as the matcher consumed them ----
+        // Both sides are returned, not just the document side: a reviewer deciding a borderline
+        // score needs to see the same pair the score came from, and the metrics above describe
+        // images nobody can look at otherwise.
         if documentAnalysis.detected, let portrait = documentPortrait {
             // The chip portrait is not mirrored, unlike the liveness frames.
             var documentImageOptions = imageOptions
@@ -155,6 +158,19 @@ final class FaceComparison {
                 json["documentFaceImageBytes"] = crop.data.count
                 json["documentFaceImageWidth"] = crop.width
                 json["documentFaceImageHeight"] = crop.height
+            }
+        }
+
+        if livenessAnalysis.detected, let portrait = livenessPortrait {
+            // Liveness frames come from the front camera, so the caller's mirroring setting is
+            // kept as-is here — unlike the chip portrait above, which is never mirrored.
+            if let crop = ImageCompressor.compress(portrait,
+                                                   faceBox: livenessAnalysis.box,
+                                                   options: imageOptions) {
+                json["livenessFaceImageBase64"] = crop.base64
+                json["livenessFaceImageBytes"] = crop.data.count
+                json["livenessFaceImageWidth"] = crop.width
+                json["livenessFaceImageHeight"] = crop.height
             }
         }
 
