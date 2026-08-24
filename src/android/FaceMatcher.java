@@ -128,6 +128,16 @@ public class FaceMatcher {
             result.reason = "MISSING_PORTRAIT";
             return result;
         }
+        if (!modelAssetExists(config.modelAsset)) {
+            // Distinguished from MATCHER_FAILED on purpose: "you never installed the model" and
+            // "the model is there but blew up" need completely different fixes, and reporting
+            // both as MATCHER_FAILED sends people debugging inference that never ran.
+            Log.w(TAG, "Face match model not found in assets: " + config.modelAsset
+                    + " — see src/models/README.md");
+            result.status = "error";
+            result.reason = "MODEL_NOT_FOUND";
+            return result;
+        }
 
         Interpreter interpreter = null;
         try {
@@ -154,9 +164,18 @@ public class FaceMatcher {
             Log.d(TAG, "On-device face match: similarity=" + result.similarity
                     + " threshold=" + config.threshold + " status=" + result.status);
             return result;
+        } catch (EmbeddingLengthException e) {
+            // Almost always a config error rather than a broken model: the .tflite emits a
+            // different vector length than embeddingSize claims.
+            Log.e(TAG, "Face match model output does not match configuration: " + e.getMessage());
+            result.status = "error";
+            result.reason = "EMBEDDING_LENGTH_MISMATCH";
+            return result;
         } catch (Exception e) {
-            // A matcher failure is never reported as a pass.
-            Log.e(TAG, "On-device face match failed: " + e.getMessage());
+            // A matcher failure is never reported as a pass. Log the exception type as well as
+            // the message — a bare getMessage() is often null and says nothing.
+            Log.e(TAG, "On-device face match failed: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage(), e);
             result.status = "error";
             result.reason = "MATCHER_FAILED";
             return result;
@@ -219,6 +238,15 @@ public class FaceMatcher {
 
         buffer.rewind();
         return buffer;
+    }
+
+    /** Cheap existence probe, so a missing model is reported as such instead of as a crash. */
+    private boolean modelAssetExists(String assetPath) {
+        try (InputStream in = context.getAssets().open(assetPath)) {
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -284,10 +312,18 @@ public class FaceMatcher {
         return normalised;
     }
 
+    /** Raised when the model's actual output length disagrees with {@code embeddingSize}. */
+    private static class EmbeddingLengthException extends RuntimeException {
+        EmbeddingLengthException(String message) {
+            super(message);
+        }
+    }
+
     /** Both vectors are L2-normalised, so this is a plain dot product. */
     private static double cosineSimilarity(float[] a, float[] b) {
         if (a.length != b.length) {
-            throw new IllegalStateException("Embedding length mismatch: " + a.length + " vs " + b.length);
+            throw new EmbeddingLengthException(
+                    "Embedding length mismatch: " + a.length + " vs " + b.length);
         }
         double dot = 0;
         for (int i = 0; i < a.length; i++) {

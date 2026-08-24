@@ -120,8 +120,13 @@ var NfcDocumentReader = {
      *   "matched" / "notMatched" - a threshold is configured and the score was compared to it
      *   "review"                 - the comparison ran and `similarity` is real, but no threshold
      *                              is configured, so the decision is left to a human
-     *   "deferred"               - no model available; no comparison attempted
-     *   "error"                  - the matcher failed; never reported as a pass
+     *   "deferred"               - matching disabled (modelAsset explicitly cleared)
+     *   "error"                  - never reported as a pass. `reason` says which:
+     *                              MODEL_NOT_FOUND           - the .tflite is not in app assets
+     *                              EMBEDDING_LENGTH_MISMATCH - model output != embeddingSize
+     *                              MISSING_PORTRAIT          - a face was not detected in one image
+     *                              MATCHER_FAILED            - anything else; check logcat/Console
+     *                                                          for tag "FaceMatcher"
      *
      * A threshold is deliberately not defaulted: it fixes the false-accept rate of an identity
      * check and has to be measured on this bank's population. See src/models/README.md.
