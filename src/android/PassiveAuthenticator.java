@@ -301,20 +301,46 @@ public class PassiveAuthenticator {
         return false;
     }
 
+    /** Mirrors FaceMatcher.candidatePaths: the same staging uncertainty applies to the bundle. */
+    private String[] candidateTrustStorePaths(String assetPath) {
+        String name = assetPath;
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        return new String[] { assetPath, "www/" + name, "public/" + name, name };
+    }
+
     private Collection<X509Certificate> loadTrustAnchors(Result result) {
         if (config.trustStoreAsset == null || config.trustStoreAsset.isEmpty()) {
             return null;
         }
-        try (InputStream in = context.getAssets().open(config.trustStoreAsset)) {
+        // Absent and unreadable are different situations and were being reported as both at
+        // once: "not installed yet" is expected on a build without a bundle, while "present but
+        // will not parse" is a fault worth chasing. Only the second is TRUST_STORE_UNREADABLE.
+        String resolved = null;
+        for (String candidate : candidateTrustStorePaths(config.trustStoreAsset)) {
+            try (InputStream probe = context.getAssets().open(candidate)) {
+                resolved = candidate;
+                break;
+            } catch (Exception notHere) {
+                // Try the next location.
+            }
+        }
+        if (resolved == null) {
+            Log.i(TAG, "No CSCA trust store installed. Searched: "
+                    + java.util.Arrays.toString(candidateTrustStorePaths(config.trustStoreAsset)));
+            return null;                    // NO_TRUST_ANCHORS is added by the caller
+        }
+
+        try (InputStream in = context.getAssets().open(resolved)) {
             CertificateFactory factory = CertificateFactory.getInstance("X.509");
             @SuppressWarnings("unchecked")
             Collection<X509Certificate> certs =
                     (Collection<X509Certificate>) factory.generateCertificates(in);
-            Log.i(TAG, "Loaded " + certs.size() + " CSCA anchors from " + config.trustStoreAsset);
+            Log.i(TAG, "Loaded " + certs.size() + " CSCA anchors from " + resolved);
             return certs;
         } catch (Exception e) {
-            Log.e(TAG, "CSCA trust store could not be read from assets ("
-                    + config.trustStoreAsset + "): " + e.getMessage());
+            Log.e(TAG, "CSCA trust store is present but could not be parsed (" + resolved
+                    + "): " + e.getMessage());
             result.trustStore = "unreadable";
             result.reasons.add("TRUST_STORE_UNREADABLE");
             return null;
