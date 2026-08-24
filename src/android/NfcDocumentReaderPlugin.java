@@ -48,6 +48,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfBirth;
     private String pendingDateOfExpiry;
     private String pendingRawMrzInfo = "";
+    private JSONObject pendingPassiveAuthConfig;
     private boolean nfcReadingActive = false;
 
     /**
@@ -282,6 +283,25 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         });
     }
 
+    /**
+     * Parses {@code options.passiveAuth}. The trust store defaults to the asset name documented
+     * in src/csca/README.md, so a build that installs the CSCA bundle gets full passive
+     * authentication with no JS changes; without it the payload reports "notVerified".
+     */
+    private PassiveAuthenticator.Config parsePassiveAuthConfig(JSONObject json) {
+        PassiveAuthenticator.Config config = new PassiveAuthenticator.Config();
+        config.trustStoreAsset = PassiveAuthenticator.DEFAULT_TRUST_STORE_ASSET;
+        if (json == null) {
+            return config;
+        }
+        if (json.has("trustStoreAsset")) {
+            config.trustStoreAsset = json.isNull("trustStoreAsset")
+                    ? null                                      // explicit opt-out
+                    : json.optString("trustStoreAsset", config.trustStoreAsset);
+        }
+        return config;
+    }
+
     private FaceMatcher.Config parseFaceMatchConfig(JSONObject json) {
         FaceMatcher.Config config = new FaceMatcher.Config();
         if (json == null) {
@@ -350,6 +370,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         pendingRawMrzInfo = "";
         pendingLivenessOptionsJson = null;
         pendingFaceMatchConfig = null;
+        pendingPassiveAuthConfig = null;
 
         // Optional second argument: { liveness: {...}, faceMatch: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -363,6 +384,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 }
                 if (readOptions.has("faceMatch") && !readOptions.isNull("faceMatch")) {
                     pendingFaceMatchConfig = readOptions.getJSONObject("faceMatch");
+                }
+                if (readOptions.has("passiveAuth") && !readOptions.isNull("passiveAuth")) {
+                    pendingPassiveAuthConfig = readOptions.getJSONObject("passiveAuth");
                 }
             } catch (JSONException e) {
                 Log.w(TAG, "Error parsing readNFC options: " + e.getMessage());
@@ -551,6 +575,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             @Override
             public void run() {
                 try {
+                    // Passive authentication always runs; the trust store decides how far it can
+                    // get. Configured per read so the CSCA bundle can be swapped without a
+                    // rebuild, and so a caller can point at a test bundle.
+                    documentReader.setPassiveAuthentication(cordova.getActivity().getApplicationContext(),
+                            parsePassiveAuthConfig(pendingPassiveAuthConfig));
+
                     documentReader.readDocument(tag, pendingDocumentNumber,
                         pendingDateOfBirth, pendingDateOfExpiry,
                         new NfcDocumentReader.ProgressListener() {

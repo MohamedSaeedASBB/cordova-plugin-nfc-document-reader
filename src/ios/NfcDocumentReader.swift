@@ -11,6 +11,15 @@ class NfcDocumentReaderWrapper {
     typealias ProgressHandler = (_ state: String, _ dgNumber: Int?, _ dgName: String?) -> Void
     typealias CompletionHandler = (_ result: [String: Any]?, _ error: String?) -> Void
 
+    /// Default CSCA bundle resource, mirroring PassiveAuthenticator.DEFAULT_TRUST_STORE_ASSET on
+    /// Android. See src/csca/README.md.
+    static let defaultTrustStoreResource = "csca_master_list.pem"
+
+    /// Resource name (or absolute path) of the PEM bundle of CSCA certificates used to decide
+    /// whether the document signer is trusted. nil disables the issuer check, which caps passive
+    /// authentication at "notVerified".
+    var trustStoreResource: String? = NfcDocumentReaderWrapper.defaultTrustStoreResource
+
     #if canImport(NFCPassportReader)
     private var passportReader: PassportReader?
     #endif
@@ -34,6 +43,19 @@ class NfcDocumentReaderWrapper {
 
         let passportReader = PassportReader()
         self.passportReader = passportReader
+
+        // NFCPassportReader runs passive authentication itself once the read completes, but the
+        // issuer check is only attempted when it has a CSCA bundle to check against. Without one
+        // it can still confirm the SOD signature and the data group hashes — self-consistency,
+        // which any forger can also produce — so the payload reports "notVerified" rather than
+        // passed. Installing the bundle is what turns that into a real verdict.
+        if let trustStorePath = resolveTrustStorePath() {
+            passportReader.setMasterListURL(URL(fileURLWithPath: trustStorePath))
+        } else {
+            NSLog("[NfcDocumentReader] No CSCA trust store found (%@); the document signer cannot"
+                  + " be verified. See src/csca/README.md.",
+                  self.trustStoreResource ?? "disabled")
+        }
 
         // For passports (TD3), request additional data groups (signature, personal/document details).
         // For national IDs (TD1/TD2), only request essentials — DG7, DG11, DG12 are commonly
@@ -145,6 +167,102 @@ class NfcDocumentReaderWrapper {
         #endif
     }
 
+    // MARK: - Authentication
+
+    /// Mirrors the Android payload exactly — see PassiveAuthenticator.java for what each field
+    /// means and, just as importantly, what it does not mean.
+    ///
+    /// The three passive-authentication checks are reported separately because only all three
+    /// together are evidence: `sodSignatureVerified` and `dataIntegrityVerified` without
+    /// `issuerTrusted` prove the chip is internally consistent, which a forger signing their own
+    /// data with their own certificate also achieves.
+    private func authenticationBlock(from passport: NFCPassportModel) -> [String: Any] {
+        let sodSignatureVerified = passport.documentSigningCertificateVerified
+        let dataIntegrityVerified = passport.passportDataNotTampered
+        let issuerTrusted = passport.passportCorrectlySigned
+
+        var reasons: [String] = []
+        if !sodSignatureVerified { reasons.append("SOD_SIGNATURE_INVALID") }
+        if !dataIntegrityVerified { reasons.append("DG_HASH_MISMATCH") }
+        if resolveTrustStorePath() == nil {
+            reasons.append("NO_TRUST_ANCHORS")
+        } else if !issuerTrusted {
+            reasons.append("ISSUER_NOT_TRUSTED")
+        }
+
+        let status: String
+        if sodSignatureVerified && dataIntegrityVerified && issuerTrusted {
+            status = "passed"
+        } else if !sodSignatureVerified || !dataIntegrityVerified || !issuerTrusted {
+            // A missing trust store is the one shortfall that is not a failure: nothing about the
+            // document was contradicted, we simply could not establish the issuer.
+            status = reasons == ["NO_TRUST_ANCHORS"] ? "notVerified" : "failed"
+        } else {
+            status = "notVerified"
+        }
+
+        // Per data group: did the computed hash match the one in the SOD. Hash values themselves
+        // are holder data and stay on the device.
+        var dataGroupHashes: [String: Bool] = [:]
+        for (dgId, hash) in passport.dataGroupHashes {
+            dataGroupHashes[String(dataGroupIdToNumber(dgId))] = hash.match
+        }
+
+        let passiveAuth: [String: Any] = [
+            "status": status,
+            "sodSignatureVerified": sodSignatureVerified,
+            "dataIntegrityVerified": dataIntegrityVerified,
+            "issuerTrusted": issuerTrusted,
+            // NFCPassportReader does not surface the SOD's algorithm identifiers, so these are
+            // reported as unavailable rather than guessed. Android fills them in. Note the
+            // document signer certificate does expose a signature algorithm, but that is the
+            // algorithm the CSCA used to sign the certificate — not the one used for the SOD —
+            // so putting it here would report the wrong thing under the right name.
+            "digestAlgorithm": NSNull(),
+            "signatureAlgorithm": NSNull(),
+            "documentSignerSubject": passport.documentSigningCertificate?.getSubjectName() ?? NSNull(),
+            "trustStore": resolveTrustStorePath() != nil ? "loaded" : "none",
+            "dataGroupHashes": dataGroupHashes,
+            "reasons": reasons
+        ]
+
+        let chipAuthentication: String
+        switch passport.chipAuthenticationStatus {
+        case .success: chipAuthentication = "success"
+        case .failed: chipAuthentication = "failed"
+        case .notDone: chipAuthentication = "notDone"
+        }
+
+        return [
+            "chipAccessEstablished": passport.BACStatus == .success || passport.PACEStatus == .success,
+            "accessProtocol": passport.PACEStatus == .success
+                ? "PACE"
+                : (passport.BACStatus == .success ? "BAC" : NSNull()),
+            "chipAuthentication": chipAuthentication,
+            "passiveAuthentication": passiveAuth
+        ]
+    }
+
+    /// Accepts a bundle resource name, a name under www/ (where Cordova stages web assets), or an
+    /// absolute path — the same three shapes FaceMatcher.resolveModelPath accepts.
+    private func resolveTrustStorePath() -> String? {
+        guard let resource = trustStoreResource, !resource.isEmpty else { return nil }
+
+        if FileManager.default.fileExists(atPath: resource) {
+            return resource
+        }
+        let name = (resource as NSString).deletingPathExtension
+        let ext = (resource as NSString).pathExtension.isEmpty
+            ? "pem"
+            : (resource as NSString).pathExtension
+        if let path = Bundle.main.path(forResource: name, ofType: ext) {
+            return path
+        }
+        return Bundle.main.path(forResource: (resource as NSString).lastPathComponent,
+                                ofType: nil,
+                                inDirectory: "www")
+    }
+
     // MARK: - Data Extraction
 
     #if canImport(NFCPassportReader)
@@ -226,8 +344,7 @@ class NfcDocumentReaderWrapper {
             dataGroupsRead.append(dataGroupIdToNumber(dgId))
         }
         data["dataGroupsRead"] = dataGroupsRead
-        data["bacSucceeded"] = passport.BACStatus == .success
-        data["chipAuthSucceeded"] = passport.chipAuthenticationStatus == .success
+        data["authentication"] = authenticationBlock(from: passport)
 
         var readErrors: [String: String] = [:]
         for error in passport.verificationErrors {

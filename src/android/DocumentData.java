@@ -51,8 +51,12 @@ public class DocumentData {
 
     // Reading metadata
     public List<Integer> dataGroupsRead = new ArrayList<>();
-    public boolean bacSucceeded = false;
-    public boolean chipAuthSucceeded = false;
+    /** True once BAC or PACE unlocked the chip. Says nothing about whether the data is genuine. */
+    public boolean chipAccessEstablished = false;
+    /** "PACE", "BAC", or null if the chip was never unlocked. */
+    public String accessProtocol = null;
+    /** Result of the ICAO 9303 passive-authentication checks, or null if they did not run. */
+    public PassiveAuthenticator.Result passiveAuthentication = null;
     public Map<Integer, String> readErrors = new HashMap<>();
 
     /**
@@ -111,8 +115,21 @@ public class DocumentData {
             dgArray.put(dg);
         }
         json.put("dataGroupsRead", dgArray);
-        json.put("bacSucceeded", bacSucceeded);
-        json.put("chipAuthSucceeded", chipAuthSucceeded);
+
+        // ---- Authentication ----
+        // The old payload reported bacSucceeded plus a chipAuthSucceeded that was set from the
+        // mere presence of a signer certificate in the SOD — no signature was ever checked. Both
+        // names are gone; each field below states exactly what was verified.
+        JSONObject auth = new JSONObject();
+        auth.put("chipAccessEstablished", chipAccessEstablished);
+        auth.put("accessProtocol", accessProtocol != null ? accessProtocol : JSONObject.NULL);
+        // Chip Authentication (anti-cloning) is a separate EAC protocol this reader does not
+        // perform on Android. Reported as not performed rather than inferred from something else.
+        auth.put("chipAuthentication", "notPerformed");
+        auth.put("passiveAuthentication", passiveAuthentication != null
+                ? passiveAuthentication.toJson()
+                : notRunPassiveAuth());
+        json.put("authentication", auth);
 
         JSONObject errorsObj = new JSONObject();
         for (Map.Entry<Integer, String> entry : readErrors.entrySet()) {
@@ -120,6 +137,22 @@ public class DocumentData {
         }
         json.put("readErrors", errorsObj);
 
+        return json;
+    }
+
+    /** Shape-compatible placeholder so consumers never have to handle a missing block. */
+    private static JSONObject notRunPassiveAuth() throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("status", "notVerified");
+        json.put("sodSignatureVerified", false);
+        json.put("dataIntegrityVerified", false);
+        json.put("issuerTrusted", false);
+        json.put("digestAlgorithm", JSONObject.NULL);
+        json.put("signatureAlgorithm", JSONObject.NULL);
+        json.put("documentSignerSubject", JSONObject.NULL);
+        json.put("trustStore", "none");
+        json.put("dataGroupHashes", new JSONObject());
+        json.put("reasons", new JSONArray().put("NOT_RUN"));
         return json;
     }
 

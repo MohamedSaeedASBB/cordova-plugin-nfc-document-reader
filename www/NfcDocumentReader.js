@@ -87,8 +87,50 @@ var NfcDocumentReader = {
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
      *     issuingAuthority, dateOfIssue, endorsementsAndObservations,
-     *     dataGroupsRead, bacSucceeded, chipAuthSucceeded, readErrors
+     *     dataGroupsRead, authentication, readErrors
      *   }
+     *
+     * BREAKING CHANGE: `bacSucceeded` and `chipAuthSucceeded` are gone, replaced by
+     * `authentication`. They were removed rather than renamed because `chipAuthSucceeded` was
+     * misleading on both platforms: on Android it was set from the mere presence of a signer
+     * certificate in the SOD — no signature was ever verified — and on iOS it carried Chip
+     * Authentication status, a different protocol. Code reading either field must move to the
+     * fields below, which state exactly what was checked.
+     *
+     *   authentication: {
+     *     chipAccessEstablished,   // BAC or PACE unlocked the chip. Says nothing about the data.
+     *     accessProtocol,          // "PACE" | "BAC" | null
+     *     chipAuthentication,      // "success" | "failed" | "notDone" | "notPerformed"
+     *                              // Anti-cloning (EAC). "notPerformed" on Android — not implemented.
+     *     passiveAuthentication: {
+     *       status,                // "passed" | "failed" | "notVerified"
+     *       sodSignatureVerified,  // the SOD is validly signed by the signer certificate it carries
+     *       dataIntegrityVerified, // every data group read hashes to the value recorded in the SOD
+     *       issuerTrusted,         // that signer chains to a CSCA in the installed trust store
+     *       digestAlgorithm,       // e.g. "SHA-256" (null on iOS — the library does not expose it)
+     *       signatureAlgorithm,    // e.g. "SHA256withRSA" (null on iOS, same reason)
+     *       documentSignerSubject, // issuer-side identity of the signer. Never holder data.
+     *       trustStore,            // "none" | "unreadable" | "loaded" | "loaded:<count>"
+     *       dataGroupHashes,       // { "1": true, "2": true, ... } per-group hash match
+     *       reasons                // codes explaining a non-"passed" status, e.g.
+     *                              // ["NO_TRUST_ANCHORS"], ["DG_HASH_MISMATCH:2"],
+     *                              // ["SOD_SIGNATURE_INVALID"], ["ISSUER_NOT_TRUSTED"],
+     *                              // ["SOD_CONTENT_DIGEST_MISMATCH"], ["SOD_NOT_READ"],
+     *                              // ["TRUST_STORE_UNREADABLE"], ["NOT_RUN"]
+     *     }
+     *   }
+     *
+     * Read `status` and nothing else if you only want one signal:
+     *   "passed"      - the chip data is what the issuing state signed, and the signer is trusted
+     *   "failed"      - something was contradicted. Do not treat the data as authentic.
+     *   "notVerified" - no contradiction, but authenticity was not established. The usual cause is
+     *                   no CSCA trust store installed (reasons: ["NO_TRUST_ANCHORS"]), which means
+     *                   the SOD and hashes are self-consistent — something a forger can also
+     *                   produce. See src/csca/README.md.
+     *
+     * Passive authentication proves the *data* is genuine. It does not prove the chip is not a
+     * clone (that is Chip Authentication) and does not prove the holder is the rightful holder
+     * (that is the face match). Revocation is not checked on either platform.
      *
      * @param {Function} success - Called with progress events and final result
      * @param {Function} error - Called with error message string
@@ -143,6 +185,10 @@ var NfcDocumentReader = {
      *
      * @param {Object} [options]
      * @param {boolean|Object} [options.liveness] - true for defaults, or a checkLiveness options object
+     * @param {Object} [options.passiveAuth] - Passive-authentication overrides; all optional
+     * @param {string|null} [options.passiveAuth.trustStoreAsset="csca_master_list.pem"] - PEM bundle
+     *                 of CSCA certificates in app assets. Pass null to skip the issuer check, which
+     *                 caps `passiveAuthentication.status` at "notVerified".
      * @param {Object} [options.faceMatch] - On-device matcher overrides; all optional
      * @param {string} [options.faceMatch.modelAsset="mobilefacenet.tflite"] - .tflite model in app assets
      * @param {number} [options.faceMatch.inputSize=112] - Model input edge (112 MobileFaceNet, 160 FaceNet)

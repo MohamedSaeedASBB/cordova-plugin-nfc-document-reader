@@ -1,5 +1,6 @@
 package com.nfcdocumentreader;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.nfc.Tag;
@@ -22,10 +23,12 @@ import org.jmrtd.lds.icao.DG2File;
 import org.jmrtd.lds.icao.DG7File;
 import org.jmrtd.lds.iso19794.FaceImageInfo;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -45,6 +48,19 @@ public class NfcDocumentReader {
     private String technicalError;  // Full technical details for diagnostics
     private String paceDebugInfo;   // PACE debug info for diagnostics
     private String nfcTechList;     // NFC technologies for diagnostics
+
+    private Context passiveAuthContext;                 // needed to read the CSCA trust store
+    private PassiveAuthenticator.Config passiveAuthConfig;
+
+    /**
+     * Enables passive authentication for the next read. Without it the chip data is returned
+     * unverified — see {@link PassiveAuthenticator}. The context is only used to read the CSCA
+     * trust store from app assets.
+     */
+    public void setPassiveAuthentication(Context context, PassiveAuthenticator.Config config) {
+        this.passiveAuthContext = context;
+        this.passiveAuthConfig = config;
+    }
 
     /**
      * Callback interface for reading progress updates.
@@ -98,6 +114,10 @@ public class NfcDocumentReader {
         DocumentData documentData = new DocumentData();
         List<Integer> dataGroupsRead = new ArrayList<>();
         java.util.Map<Integer, String> readErrors = new java.util.HashMap<>();
+        // Exact bytes as read from the chip, kept for the passive-authentication hash comparison.
+        // Parsing and re-encoding a data group does not reproduce these bytes, so hashing a
+        // re-encoded group would fail on genuine documents. Cleared as soon as PA has run.
+        java.util.Map<Integer, byte[]> rawDgBytes = new LinkedHashMap<>();
 
         try {
             if (listener != null) listener.onStateChanged("connecting");
@@ -457,8 +477,10 @@ public class NfcDocumentReader {
             // ---- Read DG1 - MRZ Information ----
             if (listener != null) listener.onReadingDataGroup(1, "MRZ Information");
             try {
-                InputStream dg1In = passportService.getInputStream(PassportService.EF_DG1);
-                DG1File dg1File = new DG1File(dg1In);
+                byte[] dg1Bytes = readAllBytes(
+                        passportService.getInputStream(PassportService.EF_DG1));
+                rawDgBytes.put(1, dg1Bytes);
+                DG1File dg1File = new DG1File(new ByteArrayInputStream(dg1Bytes));
                 org.jmrtd.lds.icao.MRZInfo mrzInfo = dg1File.getMRZInfo();
 
                 String genderStr;
@@ -498,8 +520,10 @@ public class NfcDocumentReader {
             // ---- Read DG2 - Facial Image ----
             if (listener != null) listener.onReadingDataGroup(2, "Facial Image");
             try {
-                InputStream dg2In = passportService.getInputStream(PassportService.EF_DG2);
-                DG2File dg2File = new DG2File(dg2In);
+                byte[] dg2Bytes = readAllBytes(
+                        passportService.getInputStream(PassportService.EF_DG2));
+                rawDgBytes.put(2, dg2Bytes);
+                DG2File dg2File = new DG2File(new ByteArrayInputStream(dg2Bytes));
                 List<?> faceInfos = dg2File.getFaceInfos();
                 Log.d(TAG, "DG2 faceInfos count: " + (faceInfos != null ? faceInfos.size() : 0));
 
@@ -531,8 +555,10 @@ public class NfcDocumentReader {
             // ---- Read DG7 - Signature (optional) ----
             if (listener != null) listener.onReadingDataGroup(7, "Signature");
             try {
-                InputStream dg7In = passportService.getInputStream(PassportService.EF_DG7);
-                DG7File dg7File = new DG7File(dg7In);
+                byte[] dg7Bytes = readAllBytes(
+                        passportService.getInputStream(PassportService.EF_DG7));
+                rawDgBytes.put(7, dg7Bytes);
+                DG7File dg7File = new DG7File(new ByteArrayInputStream(dg7Bytes));
                 List<?> displayedImages = dg7File.getImages();
 
                 if (displayedImages != null && !displayedImages.isEmpty()) {
@@ -554,8 +580,10 @@ public class NfcDocumentReader {
             // ---- Read DG11 - Additional Personal Details (optional) ----
             if (listener != null) listener.onReadingDataGroup(11, "Additional Personal Details");
             try {
-                InputStream dg11In = passportService.getInputStream(PassportService.EF_DG11);
-                DG11File dg11File = new DG11File(dg11In);
+                byte[] dg11Bytes = readAllBytes(
+                        passportService.getInputStream(PassportService.EF_DG11));
+                rawDgBytes.put(11, dg11Bytes);
+                DG11File dg11File = new DG11File(new ByteArrayInputStream(dg11Bytes));
 
                 documentData.fullNameOfHolder = safeString(dg11File.getNameOfHolder());
                 try {
@@ -583,8 +611,10 @@ public class NfcDocumentReader {
             // ---- Read DG12 - Additional Document Details (optional) ----
             if (listener != null) listener.onReadingDataGroup(12, "Additional Document Details");
             try {
-                InputStream dg12In = passportService.getInputStream(PassportService.EF_DG12);
-                DG12File dg12File = new DG12File(dg12In);
+                byte[] dg12Bytes = readAllBytes(
+                        passportService.getInputStream(PassportService.EF_DG12));
+                rawDgBytes.put(12, dg12Bytes);
+                DG12File dg12File = new DG12File(new ByteArrayInputStream(dg12Bytes));
 
                 documentData.issuingAuthority = safeString(dg12File.getIssuingAuthority());
                 documentData.dateOfIssue = safeString(dg12File.getDateOfIssue());
@@ -599,21 +629,35 @@ public class NfcDocumentReader {
 
             // ---- Read SOD - Document Security Object ----
             if (listener != null) listener.onReadingDataGroup(0, "Security Object");
-            boolean chipAuthSucceeded = false;
+            SODFile sodFile = null;
             try {
                 InputStream sodIn = passportService.getInputStream(PassportService.EF_SOD);
-                SODFile sodFile = new SODFile(sodIn);
-                try {
-                    chipAuthSucceeded = sodFile.getDocSigningCertificate() != null;
-                } catch (Exception ignored) {}
-                Log.d(TAG, "SOD read successfully, cert present: " + chipAuthSucceeded);
+                sodFile = new SODFile(sodIn);
+                Log.d(TAG, "SOD read successfully");
             } catch (Exception e) {
                 Log.w(TAG, "SOD not available: " + e.getMessage());
+                readErrors.put(0, e.getMessage() != null ? e.getMessage() : "Not available");
             }
 
+            // ---- Passive authentication ----
+            // Runs last because it needs both the SOD and every data group's raw bytes. Skipped
+            // only when no context was supplied, in which case the payload reports "notVerified"
+            // rather than implying the data was checked.
+            if (passiveAuthContext != null) {
+                PassiveAuthenticator authenticator =
+                        new PassiveAuthenticator(passiveAuthContext, passiveAuthConfig);
+                documentData.passiveAuthentication = authenticator.verify(sodFile, rawDgBytes);
+            } else {
+                Log.w(TAG, "Passive authentication skipped: no context configured");
+            }
+            // The raw groups are holder data; drop them now that the hashes have been compared.
+            rawDgBytes.clear();
+
             documentData.dataGroupsRead = dataGroupsRead;
-            documentData.bacSucceeded = bacSucceeded || paceSucceeded;
-            documentData.chipAuthSucceeded = chipAuthSucceeded;
+            documentData.chipAccessEstablished = bacSucceeded || paceSucceeded;
+            // The protocol that actually unlocked the chip. BAC wins when both are set, because
+            // the BAC path only runs as a fallback after PACE could not deliver a readable EF.COM.
+            documentData.accessProtocol = bacSucceeded ? "BAC" : (paceSucceeded ? "PACE" : null);
             documentData.readErrors = readErrors;
 
             this.result = documentData;

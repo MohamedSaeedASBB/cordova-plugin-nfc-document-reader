@@ -46,6 +46,13 @@
                        target="app/src/main/assets/mobilefacenet.tflite" />
         -->
 
+        <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
+             Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because
+             the document signer cannot be traced to an issuing state. See src/csca/README.md.
+        <resource-file src="src/csca/csca_master_list.pem"
+                       target="app/src/main/assets/csca_master_list.pem" />
+        -->
+
         <resource-file src="src/android/nfc_tech_filter.xml" target="res/xml/nfc_tech_filter.xml" />
         <resource-file src="src/android/activity_mrz_camera.xml" target="res/layout/activity_mrz_camera.xml" />
         <resource-file src="src/android/activity_liveness_camera.xml" target="res/layout/activity_liveness_camera.xml" />
@@ -64,6 +71,7 @@
         <source-file src="src/android/ImageCompressor.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/FaceComparison.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/FaceMatcher.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/PassiveAuthenticator.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />
@@ -128,6 +136,12 @@
         <source-file src="src/ios/ImageCompressor.swift" />
         <source-file src="src/ios/FaceComparison.swift" />
         <source-file src="src/ios/FaceMatcher.swift" />
+
+        <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
+             Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because
+             the document signer cannot be traced to an issuing state. See src/csca/README.md.
+        <resource-file src="src/csca/csca_master_list.pem" />
+        -->
 
         <!-- face-match model: uncomment once src/models/mobilefacenet.tflite is present.
              Cordova fails plugin install if a resource-file src does not exist, which is why
