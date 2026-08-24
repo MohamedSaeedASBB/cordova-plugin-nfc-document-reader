@@ -151,6 +151,11 @@ public class LivenessCameraActivity extends AppCompatActivity {
         config.faceSearchTimeoutMs = options.faceSearchTimeoutMs;
         detector = new LivenessDetector(config);
 
+        // Same reason as the MRZ screen: full-screen preview, so the chrome dodges the bars.
+        SystemBarInsets.apply(findViewById(android.R.id.content),
+                findViewById(getResId("topBar")),
+                findViewById(getResId("bottomPanel")));
+
         cameraExecutor = Executors.newSingleThreadExecutor();
         faceDetector = FaceDetection.getClient(new FaceDetectorOptions.Builder()
                 // FAST keeps the frame rate high enough to catch a blink; ACCURATE is for
