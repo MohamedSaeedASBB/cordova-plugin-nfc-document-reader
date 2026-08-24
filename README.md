@@ -204,6 +204,64 @@ NFC.isNFCAvailable(function (status) {
 });
 ```
 
+## `verification` — the block to build logic on
+
+The native payload reports every check separately and precisely, which is right for an audit trail
+and awkward for application logic. `readNFC` therefore adds a `verification` block: one outcome,
+flat fields, and plain-language issues.
+
+```json
+{
+  "outcome": "pass",                    // "pass" | "review" | "fail"
+  "requiresManualReview": false,
+  "checksPerformed": ["chipAccess", "documentAuthenticity", "liveness", "faceMatch"],
+  "documentAuthentic": "yes",           // "yes" | "no" | "unknown"
+  "documentTampered": false,
+  "chipUnlocked": true,
+  "holderPresent": "yes",               // "yes" | "no" | "notChecked"
+  "faceMatch": "matched",               // "matched" | "notMatched" | "review" | "notAvailable"
+  "faceMatchScore": 0.94,
+  "faceMatchThreshold": 0.9,
+  "issues": [],
+  "blockingIssueCount": 0,
+  "summary": "Document is genuine and issued by a trusted authority. A live person was present. Their face matches the chip photo."
+}
+```
+
+Branch on `outcome` alone if you want one decision:
+
+| `outcome` | Meaning | Suggested handling |
+|---|---|---|
+| `pass` | every check that ran succeeded | proceed |
+| `review` | nothing was contradicted, but something could not be established | queue for an officer |
+| `fail` | a check was contradicted | stop; `summary` says why |
+
+```js
+switch (data.verification.outcome) {
+    case "pass":   return proceed();
+    case "review": return sendToManualReview(data.verification.summary);
+    case "fail":   return reject(data.verification.summary);
+}
+```
+
+**Two rules it will not bend.** *Unknown is never treated as good* — a check that could not run
+reports `unknown` and forces `review`, never contributing to a `pass`; an un-provisioned trust
+store or missing face-match model is not evidence of anything. And *only checks that actually ran
+can produce a pass* — `checksPerformed` says which those were, so a chip-only read cannot imply
+anything about who presented the document.
+
+`issues[]` entries carry `{ code, severity, message }`, with `severity` either `blocking` or
+`warning`. `code` is the machine-readable value to branch on; `message` is safe to show a person.
+
+> **While the 0.90 threshold is uncalibrated**, a genuine customer will often score below it and
+> produce `outcome: "fail"` with `faceMatch: "notMatched"`. Until the threshold is measured,
+> consider routing that specific combination to manual review rather than to a rejection — the
+> score and the bar it missed are both in the payload.
+
+The same function is exposed as `NfcDocumentReader.summarise(result)`, so a stored payload can be
+re-summarised without another read. The detailed native blocks below are left untouched alongside
+it.
+
 ## Result payload
 
 ```
@@ -260,11 +318,33 @@ If you read one field, read `passiveAuthentication.status`:
                       frontal, largeEnough, imageWidth, imageHeight },
   livenessPortrait: { ...same shape... },
   screening: { passed, reasons[], note },        // quality gate, NOT an identity match
+
+  // the two detected faces, cropped as the matcher consumed them
   documentFaceImageBase64, documentFaceImageBytes,
   documentFaceImageWidth, documentFaceImageHeight,
+  livenessFaceImageBase64, livenessFaceImageBytes,
+  livenessFaceImageWidth, livenessFaceImageHeight,
+
   match: { status, similarity, threshold, reason, onDevice }
 }
 ```
+
+### Images in the payload
+
+Every image is base64 JPEG or PNG, ready to drop into an `<img src="data:image/jpeg;base64,…">`.
+
+| Path | What it is |
+|---|---|
+| `faceImageBase64` | full portrait from the chip (DG2) |
+| `signatureImageBase64` | holder's signature from the chip (DG7), when present |
+| `liveness.faceImageBase64` | portrait captured during the liveness check |
+| `faceComparison.documentFaceImageBase64` | **detected face** cropped from the chip portrait |
+| `faceComparison.livenessFaceImageBase64` | **detected face** cropped from the live capture |
+
+The last two are the pair the similarity score was computed from — show those side by side on a
+review screen, not the full frames. Each is accompanied by `…Bytes`, `…Width` and `…Height`, and
+each is present only when a face was actually detected on that side; `faceComparison.screening`
+and the `documentPortrait` / `livenessPortrait` metrics say why if one is missing.
 
 `match.status`:
 

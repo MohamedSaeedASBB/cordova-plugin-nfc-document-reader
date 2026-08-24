@@ -2,6 +2,210 @@ var exec = require('cordova/exec');
 
 var SERVICE_NAME = 'NfcDocumentReader';
 
+/**
+ * ---------------------------------------------------------------------------------------------
+ * Business-friendly verdict
+ * ---------------------------------------------------------------------------------------------
+ * The native payload reports each check separately and precisely, which is right for an audit
+ * trail and awkward for application logic: deciding whether to let a customer through should not
+ * require reading eight nested booleans and knowing which combinations mean what.
+ *
+ * `summarise` folds those into one `verification` block: a single outcome, plain-language issues,
+ * and flat fields an OutSystems (or any) flow can branch on directly. It is computed in
+ * JavaScript on purpose — one implementation for both platforms, rather than the same decision
+ * table written twice in Java and Swift, where the two would drift.
+ *
+ * Two rules it will not bend:
+ *
+ *   1. Unknown is never treated as good. A check that could not run reports "unknown" and forces
+ *      "review" — it never contributes to a "pass". An un-provisioned trust store or a missing
+ *      face-match model is not evidence of anything.
+ *   2. Only checks that actually ran can produce a pass, and `checksPerformed` says which those
+ *      were. A chip-only read that passes says the document is authentic; it says nothing about
+ *      who presented it, and `holderPresent` stays "notChecked" to keep that visible.
+ *
+ * The detailed native blocks are left untouched alongside it, so nothing is lost.
+ */
+
+/** code -> [severity, plain-language message]. Severity: "blocking" | "warning". */
+var ISSUE_TEXT = {
+    // Passive authentication
+    SOD_SIGNATURE_INVALID:       ["blocking", "The chip's signature is not valid. The document data cannot be trusted."],
+    SOD_CONTENT_DIGEST_MISMATCH: ["blocking", "The chip's signed contents do not match the signature. Possible tampering."],
+    SOD_SIGNATURE_UNCHECKABLE:   ["warning",  "The chip's signature could not be checked."],
+    DG_HASHES_UNCHECKABLE:       ["warning",  "The chip data could not be checked against the issuer's signature."],
+    NO_DATA_GROUPS_TO_VERIFY:    ["warning",  "No chip data was available to verify."],
+    NO_DOC_SIGNING_CERTIFICATE:  ["blocking", "The chip carries no signing certificate, so its data cannot be verified."],
+    ISSUER_NOT_TRUSTED:          ["blocking", "The certificate that signed this document is not from a trusted issuing authority."],
+    NO_TRUST_ANCHORS:            ["warning",  "The list of trusted issuing authorities is not installed, so the document's issuer could not be confirmed."],
+    TRUST_STORE_UNREADABLE:      ["warning",  "The list of trusted issuing authorities could not be read."],
+    SOD_NOT_READ:                ["warning",  "The chip's security data could not be read."],
+    DOC_SIGNER_CERTIFICATE_EXPIRED: ["warning", "The certificate that signed this document has expired. Normal for older documents."],
+    NOT_RUN:                     ["warning",  "The document authenticity check did not run."],
+    // Face match
+    MODEL_NOT_INSTALLED:         ["warning",  "Face matching is not enabled in this build."],
+    NO_MODEL_CONFIGURED:         ["warning",  "Face matching is switched off."],
+    MODEL_NOT_FOUND:             ["warning",  "The face matching model is missing from this build."],
+    EMBEDDING_LENGTH_MISMATCH:   ["warning",  "The face matching model is misconfigured."],
+    MISSING_PORTRAIT:            ["warning",  "A face could not be found in the chip photo or the selfie."],
+    MATCHER_FAILED:              ["warning",  "The face comparison could not be completed."],
+    NO_THRESHOLD_CONFIGURED:     ["warning",  "No face match threshold is set, so the score needs a human decision."],
+    // Raised by summarise itself rather than by the native layer, so that every failure carries a
+    // reason a person can act on.
+    LIVENESS_FAILED:             ["blocking", "The liveness check did not pass — no live person was confirmed in front of the camera."],
+    CHIP_NOT_UNLOCKED:           ["blocking", "The document's chip could not be unlocked."],
+    NO_CHECKS_PERFORMED:         ["warning",  "No verification checks were completed on this result."]
+};
+
+function describeIssue(code) {
+    // A per-data-group code arrives as "DG_HASH_MISMATCH:2".
+    var base = String(code).split(":")[0];
+    if (base === "DG_HASH_MISMATCH" || base === "DG_NOT_COVERED_BY_SOD") {
+        return {
+            code: code,
+            severity: "blocking",
+            message: "Part of the chip data does not match the issuer's signature. Possible tampering."
+        };
+    }
+    var known = ISSUE_TEXT[base];
+    return {
+        code: code,
+        severity: known ? known[0] : "warning",
+        message: known ? known[1] : "Unrecognised check result: " + code
+    };
+}
+
+/**
+ * Builds the `verification` block from a readNFC result. Exposed as
+ * NfcDocumentReader.summarise(result) so it can also be run over a stored payload.
+ */
+function summarise(result) {
+    result = result || {};
+    var auth = result.authentication || {};
+    var passive = auth.passiveAuthentication || {};
+    var comparison = result.faceComparison || null;
+    var match = comparison ? (comparison.match || {}) : null;
+    var liveness = result.liveness || null;
+
+    var checksPerformed = [];
+    var issues = [];
+
+    // ---- Chip access ----
+    var chipUnlocked = auth.chipAccessEstablished === true;
+    if (auth.hasOwnProperty("chipAccessEstablished")) checksPerformed.push("chipAccess");
+
+    // ---- Document authenticity ----
+    var documentAuthentic = "unknown";
+    if (passive.status === "passed") documentAuthentic = "yes";
+    else if (passive.status === "failed") documentAuthentic = "no";
+    if (passive.status) checksPerformed.push("documentAuthenticity");
+    (passive.reasons || []).forEach(function(code) { issues.push(describeIssue(code)); });
+
+    // Tampering is a stronger, narrower claim than "not authentic": it means a hash or the signed
+    // content was contradicted, not merely that the issuer is unconfirmed.
+    var documentTampered = passive.dataIntegrityVerified === false
+        || passive.sodSignatureVerified === false;
+
+    // ---- Holder present (liveness) ----
+    var holderPresent = "notChecked";
+    if (liveness) {
+        checksPerformed.push("liveness");
+        holderPresent = liveness.passed === true ? "yes" : "no";
+        if (holderPresent === "no") issues.push(describeIssue("LIVENESS_FAILED"));
+    }
+
+    // ---- Face match ----
+    var faceMatch = "notAvailable";
+    var faceMatchScore = null;
+    var faceMatchThreshold = null;
+    if (match) {
+        checksPerformed.push("faceMatch");
+        faceMatchScore = (typeof match.similarity === "number") ? match.similarity : null;
+        faceMatchThreshold = (typeof match.threshold === "number") ? match.threshold : null;
+        if (match.status === "matched") faceMatch = "matched";
+        else if (match.status === "notMatched") faceMatch = "notMatched";
+        else if (match.status === "review") faceMatch = "review";
+        if (match.reason) issues.push(describeIssue(match.reason));
+        if (faceMatch === "notMatched") {
+            // Quotes the reported score and threshold as they are; no derived figures.
+            issues.push({
+                code: "FACE_NOT_MATCHED",
+                severity: "blocking",
+                message: "The selfie did not match the chip photo closely enough"
+                    + (faceMatchScore !== null ? " (score " + faceMatchScore : " (score unavailable")
+                    + (faceMatchThreshold !== null ? ", required " + faceMatchThreshold : "")
+                    + ")."
+            });
+        }
+    }
+
+    // ---- Outcome ----
+    // Fail only on a contradiction. Anything merely unestablished is "review", because a check
+    // that could not run is not evidence against the customer either.
+    var outcome;
+    var chipCheckRan = auth.hasOwnProperty("chipAccessEstablished");
+    if (chipCheckRan && !chipUnlocked) issues.push(describeIssue("CHIP_NOT_UNLOCKED"));
+
+    if (!checksPerformed.length) {
+        // Nothing was established either way. "review" rather than "fail": an empty or malformed
+        // payload is a defect on our side, not evidence against the customer.
+        issues.push(describeIssue("NO_CHECKS_PERFORMED"));
+        outcome = "review";
+    } else if (documentAuthentic === "no" || documentTampered
+            || holderPresent === "no" || faceMatch === "notMatched"
+            || (chipCheckRan && !chipUnlocked)) {
+        outcome = "fail";
+    } else if (documentAuthentic === "yes"
+            && (holderPresent === "yes" || holderPresent === "notChecked")
+            && (faceMatch === "matched" || faceMatch === "notAvailable")) {
+        // "notAvailable"/"notChecked" only reach here with their warnings already in `issues`,
+        // and checksPerformed records what was actually established.
+        outcome = (faceMatch === "notAvailable" || holderPresent === "notChecked")
+            ? "review"
+            : "pass";
+    } else {
+        outcome = "review";
+    }
+
+    var blocking = issues.filter(function(i) { return i.severity === "blocking"; });
+
+    return {
+        outcome: outcome,                       // "pass" | "review" | "fail"
+        requiresManualReview: outcome === "review",
+        checksPerformed: checksPerformed,
+        documentAuthentic: documentAuthentic,   // "yes" | "no" | "unknown"
+        documentTampered: documentTampered,
+        chipUnlocked: chipUnlocked,
+        holderPresent: holderPresent,           // "yes" | "no" | "notChecked"
+        faceMatch: faceMatch,                   // "matched" | "notMatched" | "review" | "notAvailable"
+        faceMatchScore: faceMatchScore,
+        faceMatchThreshold: faceMatchThreshold,
+        issues: issues,
+        blockingIssueCount: blocking.length,
+        summary: buildSummary(outcome, documentAuthentic, holderPresent, faceMatch, blocking)
+    };
+}
+
+function buildSummary(outcome, documentAuthentic, holderPresent, faceMatch, blocking) {
+    if (outcome === "fail") {
+        if (!blocking.length) return "Rejected: a verification check did not pass.";
+        return "Rejected: " + blocking.map(function(i) { return i.message; }).join(" ");
+    }
+    var parts = [];
+    parts.push(documentAuthentic === "yes"
+        ? "Document is genuine and issued by a trusted authority."
+        : (documentAuthentic === "no"
+            ? "Document could not be confirmed as genuine."
+            : "Document authenticity could not be established."));
+    if (holderPresent === "yes") parts.push("A live person was present.");
+    else if (holderPresent === "notChecked") parts.push("Presence of the holder was not checked.");
+    if (faceMatch === "matched") parts.push("Their face matches the chip photo.");
+    else if (faceMatch === "review") parts.push("The face comparison needs a human decision.");
+    else if (faceMatch === "notAvailable") parts.push("Face comparison was not available.");
+    if (outcome === "review") parts.push("Send to manual review.");
+    return parts.join(" ");
+}
+
 var NfcDocumentReader = {
 
     /**
@@ -86,8 +290,14 @@ var NfcDocumentReader = {
      *   { event: "stateChanged", state: "readingDataGroup", dgNumber: 1, dgName: "MRZ Information" }
      *   ...
      *
-     * Final result (last callback, keepCallback=false):
+     * Final result (last callback, keepCallback=false). `verification` is added by this plugin's
+     * JavaScript layer and is the block to build application logic on — one outcome
+     * ("pass" | "review" | "fail"), flat fields, and plain-language issues. See README.md.
      *   {
+     *     verification: { outcome, requiresManualReview, checksPerformed, documentAuthentic,
+     *                     documentTampered, chipUnlocked, holderPresent, faceMatch,
+     *                     faceMatchScore, faceMatchThreshold, issues, blockingIssueCount,
+     *                     summary },
      *     documentType, issuingState, primaryIdentifier, secondaryIdentifier,
      *     documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
      *     faceImageBase64, signatureImageBase64,
@@ -163,8 +373,15 @@ var NfcDocumentReader = {
      *                         frontal, largeEnough, imageWidth, imageHeight },
      *     livenessPortrait: { ...same shape... },
      *     screening: { passed, reasons[], note },   // quality gate, NOT an identity match
+     *
+     *     // The two detected faces, cropped exactly as the matcher consumed them. Present
+     *     // whenever a face was found on that side; a reviewer settling a borderline score needs
+     *     // to see the same pair the score came from.
      *     documentFaceImageBase64, documentFaceImageBytes,
      *     documentFaceImageWidth, documentFaceImageHeight,
+     *     livenessFaceImageBase64, livenessFaceImageBytes,
+     *     livenessFaceImageWidth, livenessFaceImageHeight,
+     *
      *     match: { status, similarity, threshold, reason, onDevice }
      *   }
      *
@@ -216,8 +433,22 @@ var NfcDocumentReader = {
      *                 and get the score with status "review" instead of a pass/fail.
      */
     readNFC: function(success, error, mrzData, options) {
-        exec(success, error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);
+        exec(function(data) {
+            // Progress events pass straight through; the final result gains `verification`.
+            if (data && !data.event) {
+                data.verification = summarise(data);
+            }
+            success(data);
+        }, error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);
     },
+
+    /**
+     * Recomputes the `verification` block for a stored readNFC result. Same function readNFC
+     * applies, exposed so a payload saved earlier can be re-summarised without another read.
+     * @param {Object} result - a readNFC final result
+     * @returns {Object} the verification block
+     */
+    summarise: summarise,
 
     /**
      * Cancel an ongoing NFC reading operation.

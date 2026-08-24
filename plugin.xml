@@ -39,12 +39,10 @@
                       android:screenOrientation="portrait" />
         </config-file>
 
-        <!-- face-match model: uncomment once src/models/mobilefacenet.tflite is present.
-             Cordova fails plugin install if a resource-file src does not exist, which is why
+                     Cordova fails plugin install if a resource-file src does not exist, which is why
              this is commented rather than live. See src/models/README.md.
         <resource-file src="src/models/mobilefacenet.tflite"
                        target="app/src/main/assets/mobilefacenet.tflite" />
-        -->
 
         <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
              Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because
@@ -144,11 +142,9 @@
         <resource-file src="src/csca/csca_master_list.pem" />
         -->
 
-        <!-- face-match model: uncomment once src/models/mobilefacenet.tflite is present.
-             Cordova fails plugin install if a resource-file src does not exist, which is why
+                     Cordova fails plugin install if a resource-file src does not exist, which is why
              this is commented rather than live. See src/models/README.md.
         <resource-file src="src/models/mobilefacenet.tflite" />
-        -->
 
         <!--
             ML Kit iOS 7.0.0 and later require iOS 15.5 and Xcode 15.3. That floor is applied in

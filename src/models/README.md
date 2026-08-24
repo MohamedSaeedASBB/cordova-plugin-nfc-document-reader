@@ -16,6 +16,14 @@ The weights are not committed because they are not ours to choose unilaterally:
 - **Threshold.** The decision boundary fixes the false-accept and false-reject rates of an
   identity check. It has to be measured, not inherited.
 
+## Currently installed
+
+A MobileFaceNet export is committed here and staged by `plugin.xml`, so the matcher runs and
+returns real similarity scores. Its origin, verified shapes and — importantly — what has **not**
+been verified about it are recorded in [PROVENANCE.md](PROVENANCE.md). It is a development and
+testing model: the licence, training-data provenance and accuracy on this customer population are
+open items for model governance.
+
 ## Installing the model
 
 1. Put the approved file here as `mobilefacenet.tflite`.

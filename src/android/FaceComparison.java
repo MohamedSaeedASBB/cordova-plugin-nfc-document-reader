@@ -166,7 +166,10 @@ public class FaceComparison {
                     + "gate only and is NOT a biometric identity match.");
             comparison.put("screening", screening);
 
-            // ---- The document-side crop the matcher will consume ----
+            // ---- The two detected faces, exactly as the matcher consumed them ----
+            // Both sides are returned, not just the document side: a reviewer deciding a
+            // borderline score needs to see the same pair the score came from, and the metrics
+            // above describe images nobody can look at otherwise.
             if (documentAnalysis.detected) {
                 ImageCompressor.Result documentCrop =
                         ImageCompressor.compress(documentPortrait, documentAnalysis.box, imageOptions);
@@ -174,6 +177,14 @@ public class FaceComparison {
                 comparison.put("documentFaceImageBytes", documentCrop.jpeg.length);
                 comparison.put("documentFaceImageWidth", documentCrop.width);
                 comparison.put("documentFaceImageHeight", documentCrop.height);
+            }
+            if (livenessAnalysis.detected) {
+                ImageCompressor.Result livenessCrop =
+                        ImageCompressor.compress(livenessPortrait, livenessAnalysis.box, imageOptions);
+                comparison.put("livenessFaceImageBase64", livenessCrop.toBase64());
+                comparison.put("livenessFaceImageBytes", livenessCrop.jpeg.length);
+                comparison.put("livenessFaceImageWidth", livenessCrop.width);
+                comparison.put("livenessFaceImageHeight", livenessCrop.height);
             }
 
             return outcome;
