@@ -49,8 +49,10 @@ import java.nio.channels.FileChannel;
  * Deliberately no default threshold is shipped: a plausible-looking constant here would become
  * the bank's de facto identity-decision boundary without anyone having measured it.
  *
- * Until a model is configured, {@link #isConfigured} is false and the match is reported as
- * deferred rather than silently passing. FaceMatcher.swift mirrors this class.
+ * Until a model is installed, the match is reported as deferred ("MODEL_NOT_INSTALLED")
+ * rather than silently passing — an un-provisioned matcher is not a failed one. A model the
+ * caller asked for by name but that is absent from the bundle is an error ("MODEL_NOT_FOUND").
+ * FaceMatcher.swift mirrors this class.
  */
 public class FaceMatcher {
 
@@ -66,6 +68,12 @@ public class FaceMatcher {
     public static class Config {
         /** Path of the .tflite model within the app's assets. Null disables on-device matching. */
         public String modelAsset = DEFAULT_MODEL_ASSET;
+        /**
+         * True when the caller passed {@code faceMatch.modelAsset} itself, false when
+         * {@link #modelAsset} is still the plugin default. A missing file means different things
+         * in the two cases — see {@link FaceMatcher#match}.
+         */
+        public boolean modelAssetExplicit = false;
         /** Square input edge the model expects (112 for MobileFaceNet, 160 for FaceNet). */
         public int inputSize = 112;
         /** Embedding length the model emits (192 for MobileFaceNet, 128/512 for FaceNet). */
@@ -129,10 +137,27 @@ public class FaceMatcher {
             return result;
         }
         if (!modelAssetExists(config.modelAsset)) {
-            // Distinguished from MATCHER_FAILED on purpose: "you never installed the model" and
-            // "the model is there but blew up" need completely different fixes, and reporting
-            // both as MATCHER_FAILED sends people debugging inference that never ran.
-            Log.w(TAG, "Face match model not found in assets: " + config.modelAsset
+            // Two different situations, and reporting both as "error" sends people debugging
+            // inference that never ran:
+            //
+            //   default asset absent  - the bank has not installed a model yet. Nothing is
+            //                           broken; on-device matching simply is not provisioned,
+            //                           which is exactly what "deferred" means. Installing the
+            //                           model is a governance step (src/models/README.md), so a
+            //                           build without it is an expected state, not a fault.
+            //   explicit asset absent - the app asked for a specific model and it is not in the
+            //                           bundle. That is a real misconfiguration.
+            //
+            // Neither is ever reported as a pass.
+            if (!config.modelAssetExplicit) {
+                Log.i(TAG, "No face match model installed at the default asset path ("
+                        + config.modelAsset + "); reporting the match as deferred."
+                        + " See src/models/README.md to install one.");
+                result.status = "deferred";
+                result.reason = "MODEL_NOT_INSTALLED";
+                return result;
+            }
+            Log.w(TAG, "Configured face match model not found in assets: " + config.modelAsset
                     + " — see src/models/README.md");
             result.status = "error";
             result.reason = "MODEL_NOT_FOUND";

@@ -22,6 +22,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var pendingDocumentResult: [String: Any]?
     private var pendingLivenessOptions: LivenessOptions?
     private var pendingFaceMatchConfig: [String: Any]?
+    private var pendingPassiveAuthConfig: [String: Any]?
     private let comparisonQueue = DispatchQueue(label: "liveness.comparison.queue")
 
     // MARK: - Plugin Lifecycle
@@ -181,10 +182,11 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         let mrzFormat = mrzData["format"] as? String ?? "TD1"
 
-        // Optional second argument: { liveness: ..., faceMatch: {...} }.
+        // Optional second argument: { liveness: ..., faceMatch: {...}, passiveAuth: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
         pendingLivenessOptions = nil
         pendingFaceMatchConfig = nil
+        pendingPassiveAuthConfig = nil
         if command.arguments.count > 1, let readOptions = command.arguments[1] as? [String: Any] {
             if let enabled = readOptions["liveness"] as? Bool, enabled {
                 pendingLivenessOptions = LivenessOptions.from([:])
@@ -192,6 +194,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                 pendingLivenessOptions = LivenessOptions.from(livenessOptions)
             }
             pendingFaceMatchConfig = readOptions["faceMatch"] as? [String: Any]
+            pendingPassiveAuthConfig = readOptions["passiveAuth"] as? [String: Any]
         }
 
         nfcCallbackId = command.callbackId
@@ -208,6 +211,12 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         // Start NFC reading
         let reader = NfcDocumentReaderWrapper()
+        // Passive authentication always runs; the trust store decides how far it can get. An
+        // explicit null opts out of the issuer check, matching the Android parser.
+        if let passiveAuth = pendingPassiveAuthConfig,
+           passiveAuth.index(forKey: "trustStoreAsset") != nil {
+            reader.trustStoreResource = passiveAuth["trustStoreAsset"] as? String
+        }
         self.documentReader = reader
 
         reader.readDocument(

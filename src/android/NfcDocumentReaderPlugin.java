@@ -8,6 +8,8 @@ import android.graphics.drawable.ColorDrawable;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -48,13 +50,34 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfBirth;
     private String pendingDateOfExpiry;
     private String pendingRawMrzInfo = "";
-    private boolean nfcReadingActive = false;
+    private JSONObject pendingPassiveAuthConfig;
+    private volatile boolean nfcReadingActive = false;
 
     /**
      * Presence checks interrupt long transactions. A full MRTD read with BAC/PACE takes many
      * seconds, so the platform is told to wait this long between checks.
      */
     private static final int READER_PRESENCE_CHECK_DELAY_MS = 20000;
+
+    /**
+     * Arming reader mode is a state to reach, not a call to make.
+     *
+     * NfcAdapter.enableReaderMode requires a resumed activity and throws if it does not have one.
+     * The common way to hit that is the natural JS flow — calling readNFC from inside the
+     * scanMRZ callback, which runs while the MRZ camera activity is still on top. The call used
+     * to throw into a catch that only logged, so the bottom sheet opened, nothing was listening
+     * for a tag, and the read waited forever on a document that could never be detected.
+     *
+     * So: readNFC records that a read wants reader mode, arming is attempted whenever the
+     * activity is actually resumed, retried a few times if the platform still refuses, and
+     * reported to the JS error callback if it never succeeds. A read that is not listening must
+     * never look like a read that is waiting for the user to tap.
+     */
+    private volatile boolean activityResumed = true;
+    private volatile boolean readerModeArmed = false;
+    private final Handler armHandler = new Handler(Looper.getMainLooper());
+    private static final int MAX_ARM_ATTEMPTS = 5;
+    private static final int ARM_RETRY_DELAY_MS = 400;
 
     /** Guards against a second tag callback starting a concurrent read. */
     private final Object tagLock = new Object();
@@ -282,12 +305,39 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         });
     }
 
+    /**
+     * Parses {@code options.passiveAuth}. The trust store defaults to the asset name documented
+     * in src/csca/README.md, so a build that installs the CSCA bundle gets full passive
+     * authentication with no JS changes; without it the payload reports "notVerified".
+     */
+    private PassiveAuthenticator.Config parsePassiveAuthConfig(JSONObject json) {
+        PassiveAuthenticator.Config config = new PassiveAuthenticator.Config();
+        config.trustStoreAsset = PassiveAuthenticator.DEFAULT_TRUST_STORE_ASSET;
+        if (json == null) {
+            return config;
+        }
+        if (json.has("trustStoreAsset")) {
+            config.trustStoreAsset = json.isNull("trustStoreAsset")
+                    ? null                                      // explicit opt-out
+                    : json.optString("trustStoreAsset", config.trustStoreAsset);
+        }
+        return config;
+    }
+
     private FaceMatcher.Config parseFaceMatchConfig(JSONObject json) {
         FaceMatcher.Config config = new FaceMatcher.Config();
         if (json == null) {
             return config;
         }
-        config.modelAsset = json.optString("modelAsset", null);
+        // Only touch modelAsset when the caller actually sent the key: optString's fallback
+        // fires for an absent key too, so reading it unconditionally wiped the documented
+        // default and silently disabled matching for anyone passing { threshold: ... } alone.
+        if (json.has("modelAsset")) {
+            config.modelAssetExplicit = true;
+            config.modelAsset = json.isNull("modelAsset")
+                    ? null                                      // explicit opt-out
+                    : json.optString("modelAsset", config.modelAsset);
+        }
         config.inputSize = json.optInt("inputSize", config.inputSize);
         config.embeddingSize = json.optInt("embeddingSize", config.embeddingSize);
         if (json.has("threshold") && !json.isNull("threshold")) {
@@ -342,6 +392,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         pendingRawMrzInfo = "";
         pendingLivenessOptionsJson = null;
         pendingFaceMatchConfig = null;
+        pendingPassiveAuthConfig = null;
 
         // Optional second argument: { liveness: {...}, faceMatch: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -355,6 +406,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 }
                 if (readOptions.has("faceMatch") && !readOptions.isNull("faceMatch")) {
                     pendingFaceMatchConfig = readOptions.getJSONObject("faceMatch");
+                }
+                if (readOptions.has("passiveAuth") && !readOptions.isNull("passiveAuth")) {
+                    pendingPassiveAuthConfig = readOptions.getJSONObject("passiveAuth");
                 }
             } catch (JSONException e) {
                 Log.w(TAG, "Error parsing readNFC options: " + e.getMessage());
@@ -543,6 +597,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             @Override
             public void run() {
                 try {
+                    // Passive authentication always runs; the trust store decides how far it can
+                    // get. Configured per read so the CSCA bundle can be swapped without a
+                    // rebuild, and so a caller can point at a test bundle.
+                    documentReader.setPassiveAuthentication(cordova.getActivity().getApplicationContext(),
+                            parsePassiveAuthConfig(pendingPassiveAuthConfig));
+
                     documentReader.readDocument(tag, pendingDocumentNumber,
                         pendingDateOfBirth, pendingDateOfExpiry,
                         new NfcDocumentReader.ProgressListener() {
@@ -703,13 +763,33 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * active, which stops the OS chime and any "New tag collected" UI.
      */
     private void enableNfcReaderMode() {
+        armHandler.removeCallbacksAndMessages(null);
+        attemptArmReaderMode(1);
+    }
+
+    /**
+     * Tries to bind reader mode, deferring to onResume while the activity is not resumed and
+     * retrying a few times if the platform refuses anyway (our resumed flag can lag a window
+     * focus change). Gives up loudly rather than quietly.
+     */
+    private void attemptArmReaderMode(final int attempt) {
         final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
+        // No read wants a tag any more, or one is already armed.
+        if (!nfcReadingActive || readerModeArmed) return;
+
+        if (!activityResumed) {
+            // Not a failure: onResume will call back in here once the MRZ or liveness activity
+            // has handed the foreground back.
+            Log.d(TAG, "Deferring NFC reader mode until the activity is resumed");
+            return;
+        }
 
         // MUST run on UI thread — enableReaderMode requires a resumed activity.
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (!nfcReadingActive || readerModeArmed) return;
                 try {
                     // Passport/ID chips are ISO-DEP over NFC-A or NFC-B. Skipping the NDEF check
                     // avoids the platform probing the card before we get to it.
@@ -725,15 +805,55 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         READER_PRESENCE_CHECK_DELAY_MS);
 
                     nfcAdapter.enableReaderMode(activity, readerCallback, flags, extras);
-                    Log.d(TAG, "NFC reader mode enabled");
+                    readerModeArmed = true;
+                    Log.d(TAG, "NFC reader mode enabled (attempt " + attempt + ")");
                 } catch (Exception e) {
-                    Log.e(TAG, "Error enabling NFC reader mode: " + e.getMessage());
+                    Log.w(TAG, "Could not enable NFC reader mode (attempt " + attempt + " of "
+                        + MAX_ARM_ATTEMPTS + "): " + e.getClass().getSimpleName() + ": "
+                        + e.getMessage());
+                    if (attempt < MAX_ARM_ATTEMPTS) {
+                        armHandler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                attemptArmReaderMode(attempt + 1);
+                            }
+                        }, ARM_RETRY_DELAY_MS);
+                    } else {
+                        reportArmFailure(e);
+                    }
                 }
             }
         });
     }
 
+    /**
+     * Tag detection could not be started, so no tap will ever be noticed. Ends the read instead
+     * of leaving the sheet up: silence here is what made this look like a dead NFC antenna.
+     */
+    private void reportArmFailure(Exception cause) {
+        Log.e(TAG, "NFC reader mode could not be enabled after " + MAX_ARM_ATTEMPTS
+            + " attempts; ending the read. Last error: "
+            + (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage()
+                             : "unknown"));
+
+        CallbackContext callback = nfcCallbackContext;
+        nfcReadingActive = false;
+        readerModeArmed = false;
+        synchronized (tagLock) {
+            tagBeingRead = false;
+        }
+        dismissNfcDialog();
+        if (callback != null) {
+            nfcCallbackContext = null;
+            callback.error("Could not start NFC scanning. Please return to the previous screen "
+                + "and try again.");
+        }
+    }
+
     private void disableNfcReaderMode() {
+        armHandler.removeCallbacksAndMessages(null);
+        readerModeArmed = false;
+
         final Activity activity = cordova.getActivity();
         if (nfcAdapter == null || activity == null) return;
 
@@ -787,7 +907,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     @Override
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
-        if (nfcReadingActive) {
+        activityResumed = true;
+        // Covers both the deferred first arm (readNFC called while the MRZ camera was still on
+        // top) and re-arming after the liveness activity hands the foreground back.
+        if (nfcReadingActive && !readerModeArmed) {
             enableNfcReaderMode();
         }
     }
@@ -795,6 +918,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     @Override
     public void onPause(boolean multitasking) {
         super.onPause(multitasking);
+        activityResumed = false;
         disableNfcReaderMode();
     }
 
