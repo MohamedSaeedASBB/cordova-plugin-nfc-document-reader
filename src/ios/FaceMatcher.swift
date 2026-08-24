@@ -144,9 +144,15 @@ final class FaceMatcher {
                                similarity: rounded,
                                threshold: threshold,
                                reason: nil)
+        } catch MatcherError.embeddingLengthMismatch(let lhs, let rhs) {
+            // Almost always a config error rather than a broken model: the .tflite emits a
+            // different vector length than embeddingSize claims.
+            NSLog("[FaceMatcher] Model output does not match configuration: %d vs %d", lhs, rhs)
+            return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
+                               reason: "EMBEDDING_LENGTH_MISMATCH")
         } catch {
             // A matcher failure is never reported as a pass.
-            NSLog("[FaceMatcher] On-device face match failed: %@", error.localizedDescription)
+            NSLog("[FaceMatcher] On-device face match failed: %@", String(describing: error))
             return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
                               reason: "MATCHER_FAILED")
         }
