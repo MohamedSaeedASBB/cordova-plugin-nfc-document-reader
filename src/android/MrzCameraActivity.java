@@ -79,6 +79,12 @@ public class MrzCameraActivity extends AppCompatActivity {
         cancelButton = findViewById(getResId("cancelButton"));
         closeButton = findViewById(getResId("closeButton"));
 
+        // The preview is deliberately full-screen, so the overlay chrome has to dodge the status
+        // bar and the navigation bar itself.
+        SystemBarInsets.apply(findViewById(android.R.id.content),
+                findViewById(getResId("topBar")),
+                findViewById(getResId("bottomPanel")));
+
         cameraExecutor = Executors.newSingleThreadExecutor();
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         mrzProcessor = new MrzOcrProcessor();

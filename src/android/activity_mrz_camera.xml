@@ -14,7 +14,8 @@
     <RelativeLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
         android:layout_alignParentTop="true"
         android:background="#CC000000"
         android:paddingStart="16dp"
@@ -82,6 +83,7 @@
         android:fillViewport="true">
 
         <LinearLayout
+            android:id="@+id/bottomPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
