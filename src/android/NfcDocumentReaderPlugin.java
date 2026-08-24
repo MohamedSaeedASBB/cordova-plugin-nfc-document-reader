@@ -360,8 +360,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         }
         config.inputSize = json.optInt("inputSize", config.inputSize);
         config.embeddingSize = json.optInt("embeddingSize", config.embeddingSize);
-        if (json.has("threshold") && !json.isNull("threshold")) {
-            config.threshold = json.optDouble("threshold");
+        if (json.has("threshold")) {
+            // An explicit null clears the built-in threshold and returns the score for review
+            // instead of a pass/fail. Absent means keep the built-in value.
+            config.threshold = json.isNull("threshold")
+                    ? null
+                    : json.optDouble("threshold", FaceMatcher.DEFAULT_THRESHOLD);
         }
         return config;
     }

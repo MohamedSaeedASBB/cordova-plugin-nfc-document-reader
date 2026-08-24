@@ -1,0 +1,10 @@
+# Python bytecode from running the calibration tools
+__pycache__/
+*.py[cod]
+
+# Approved model weights and CSCA bundles are installed locally, never committed:
+# both are governance-controlled artefacts. See src/models/README.md and src/csca/README.md.
+src/models/*.tflite
+src/csca/*.pem
+
+.DS_Store

@@ -129,12 +129,71 @@ def sweep(genuine_scores, impostor_scores, steps):
     return rows
 
 
+def inspect(model_path):
+    """
+    Reports what the model actually expects, so inputSize/embeddingSize come from the file rather
+    than from an assumption. Normalisation cannot be read out of a .tflite — it is a property of
+    how the model was trained — so it is flagged rather than guessed.
+    """
+    interpreter = load_interpreter(model_path)
+    input_detail = interpreter.get_input_details()[0]
+    output_detail = interpreter.get_output_details()[0]
+
+    def dtype_name(detail):
+        # Runtimes differ slightly in what they put in the details dict; report what is there
+        # rather than failing the inspection over a missing key.
+        dtype = detail.get("dtype")
+        return getattr(dtype, "__name__", str(dtype)) if dtype is not None else "unknown"
+
+    in_shape = list(input_detail["shape"])
+    out_shape = list(output_detail["shape"])
+    in_dtype = dtype_name(input_detail)
+    print("model:        %s" % model_path)
+    print("sha256:       %s" % hashlib.sha256(open(model_path, "rb").read()).hexdigest())
+    print("input:        shape=%s dtype=%s" % (in_shape, in_dtype))
+    print("output:       shape=%s dtype=%s" % (out_shape, dtype_name(output_detail)))
+
+    problems = []
+    if len(in_shape) == 4 and in_shape[1] == in_shape[2]:
+        print("\nPlugin config for this model:")
+        print("  faceMatch.inputSize     = %d" % in_shape[1])
+        if in_shape[3] != 3:
+            problems.append("input has %d channels, not 3 (RGB); the plugin feeds RGB"
+                            % in_shape[3])
+    else:
+        problems.append("input shape %s is not [1, N, N, 3]; the plugin feeds a square RGB image"
+                        % in_shape)
+
+    embedding = out_shape[-1] if out_shape else 0
+    print("  faceMatch.embeddingSize = %d" % embedding)
+
+    if in_dtype not in ("float32", "unknown"):
+        problems.append("input dtype is %s, not float32; the plugin feeds normalised floats"
+                        % in_dtype)
+
+    print("\nNot readable from the file — confirm against the model's documentation:")
+    print("  pixel normalisation. The plugin applies (x - %.1f) / %.1f. A model trained with"
+          % (PIXEL_MEAN, PIXEL_SCALE))
+    print("  different normalisation still runs and still returns plausible-looking scores, so a")
+    print("  mismatch shows up as a poor operating point rather than an error. If it differs,")
+    print("  change PIXEL_MEAN/PIXEL_SCALE in FaceMatcher.java, FaceMatcher.swift and this file.")
+
+    if problems:
+        print("\nPROBLEMS:")
+        for problem in problems:
+            print("  - %s" % problem)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", required=True, help="Path to the .tflite embedding model")
-    parser.add_argument("--pairs", required=True, help="CSV of labelled pairs")
-    parser.add_argument("--out", required=True, help="Output directory (created if absent)")
+    parser.add_argument("--pairs", help="CSV of labelled pairs (not needed with --inspect)")
+    parser.add_argument("--out", help="Output directory (not needed with --inspect)")
+    parser.add_argument("--inspect", action="store_true",
+                        help="Print the model's real input/output shapes and the plugin config "
+                             "they imply, then exit. Use before wiring a new model in.")
     parser.add_argument("--boxes", help="JSON of image path to face box")
     parser.add_argument("--input-size", type=int, default=DEFAULT_INPUT_SIZE)
     parser.add_argument("--embedding-size", type=int, default=192)
@@ -146,6 +205,12 @@ def main():
     parser.add_argument("--anonymise-ids", action="store_true",
                         help="Replace file paths in outputs with a salted hash")
     args = parser.parse_args()
+
+    if args.inspect:
+        inspect(args.model)
+        return
+    if not args.pairs or not args.out:
+        sys.exit("--pairs and --out are required unless --inspect is given.")
 
     target_fars = args.target_far if args.target_far else [0.01, 0.001, 0.0001]
 

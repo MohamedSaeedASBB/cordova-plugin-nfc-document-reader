@@ -174,8 +174,8 @@ var NfcDocumentReader = {
      *
      * `match.status`:
      *   "matched" / "notMatched" - a threshold is configured and the score was compared to it
-     *   "review"                 - the comparison ran and `similarity` is real, but no threshold
-     *                              is configured, so the decision is left to a human
+     *   "review"                 - the comparison ran and `similarity` is real, but the threshold
+     *                              was explicitly cleared, so the decision is left to a human
      *   "deferred"               - no comparison ran and nothing is broken. `reason` says which:
      *                              MODEL_NOT_INSTALLED  - no model at the default asset path, so
      *                                                     on-device matching is not provisioned
@@ -190,8 +190,12 @@ var NfcDocumentReader = {
      *                              MATCHER_FAILED            - anything else; check logcat/Console
      *                                                          for tag "FaceMatcher"
      *
-     * A threshold is deliberately not defaulted: it fixes the false-accept rate of an identity
-     * check and has to be measured on this bank's population. See src/models/README.md.
+     * The threshold is built into the plugin (0.9) so nothing has to be passed from JavaScript.
+     * It is a policy floor, not a measured operating point: the false-accept and false-reject
+     * rates it produces on this customer population have not been established. Cosine similarity
+     * runs from -1 to 1, and chip portraits are typically low-resolution and years old, so expect
+     * genuine pairs to fall below 0.9 and be reported as "notMatched" until it is calibrated.
+     * tools/face-match-calibration derives a defensible value. See src/models/README.md.
      *
      * Everything needed by the back office is in this one object: the chip data groups, the chip
      * portrait (faceImageBase64), the liveness portrait (liveness.faceImageBase64), the aligned
@@ -207,8 +211,9 @@ var NfcDocumentReader = {
      * @param {string} [options.faceMatch.modelAsset="mobilefacenet.tflite"] - .tflite model in app assets
      * @param {number} [options.faceMatch.inputSize=112] - Model input edge (112 MobileFaceNet, 160 FaceNet)
      * @param {number} [options.faceMatch.embeddingSize=192] - Model output vector length
-     * @param {number} [options.faceMatch.threshold] - Cosine-similarity threshold. Omit and the
-     *                 score is still returned, with status "review" instead of a pass/fail.
+     * @param {number|null} [options.faceMatch.threshold=0.9] - Cosine-similarity threshold, in
+     *                 [-1, 1]. Built in, so it normally needs no value here. Pass null to clear it
+     *                 and get the score with status "review" instead of a pass/fail.
      */
     readNFC: function(success, error, mrzData, options) {
         exec(success, error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);

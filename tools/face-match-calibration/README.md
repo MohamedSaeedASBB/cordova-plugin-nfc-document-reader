@@ -17,6 +17,21 @@ salted hash if the results will be shared beyond the person running it.
 Assembling the pair set is itself a data project — consent, retention, and access control for a
 collection of selfies and chip portraits — and should be signed off before collection, not after.
 
+## Checking a model before wiring it in
+
+```
+python3 calibrate.py --model /path/to/mobilefacenet.tflite --inspect
+```
+
+Prints the model's real input and output shapes and the `faceMatch.inputSize` /
+`faceMatch.embeddingSize` they imply, so those come from the file rather than an assumption. It
+exits non-zero if the shapes cannot work with the plugin at all.
+
+Pixel normalisation cannot be read out of a `.tflite` — it is a property of how the model was
+trained. A model trained with different normalisation still runs and still returns
+plausible-looking scores, so a mismatch shows up as a disappointing operating point rather than an
+error. Confirm it against the model's documentation.
+
 ## Running it
 
 ```
