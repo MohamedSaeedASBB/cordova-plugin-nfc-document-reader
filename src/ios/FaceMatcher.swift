@@ -32,8 +32,10 @@ import TensorFlowLite
 /// Deliberately no default threshold is shipped: a plausible-looking constant here would become
 /// the bank's de facto identity-decision boundary without anyone having measured it.
 ///
-/// Until a model is configured, `isConfigured` is false and the match is reported as deferred
-/// rather than silently passing. FaceMatcher.java mirrors this type.
+/// Until a model is installed, the match is reported as deferred ("MODEL_NOT_INSTALLED") rather
+/// than silently passing — an un-provisioned matcher is not a failed one. A model the caller asked
+/// for by name but that is absent from the bundle is an error ("MODEL_NOT_FOUND").
+/// FaceMatcher.java mirrors this type.
 final class FaceMatcher {
 
     /// Standard preprocessing for MobileFaceNet/FaceNet-family models.
@@ -46,6 +48,10 @@ final class FaceMatcher {
     struct Config {
         /// Bundle resource name of the .tflite model. nil disables on-device matching.
         var modelAsset: String? = FaceMatcher.defaultModelAsset
+        /// True when the caller supplied `faceMatch.modelAsset` itself, false when `modelAsset`
+        /// is still the plugin default. A missing file means different things in the two cases —
+        /// see `match(documentPortrait:documentFaceBox:livenessPortrait:livenessFaceBox:)`.
+        var modelAssetExplicit = false
         /// Square input edge the model expects (112 for MobileFaceNet, 160 for FaceNet).
         var inputSize: Int = 112
         /// Embedding length the model emits (192 for MobileFaceNet, 128/512 for FaceNet).
@@ -59,7 +65,12 @@ final class FaceMatcher {
         static func from(_ dict: [String: Any]?) -> Config {
             var config = Config()
             guard let dict = dict else { return config }
-            if let asset = dict["modelAsset"] as? String { config.modelAsset = asset }
+            if dict.index(forKey: "modelAsset") != nil {
+                // Mirrors the Android parser: an explicit null clears the model and disables
+                // matching, which a plain `as? String` cast would have ignored.
+                config.modelAssetExplicit = true
+                config.modelAsset = dict["modelAsset"] as? String
+            }
             if let value = dict["inputSize"] as? Int { config.inputSize = value }
             if let value = dict["embeddingSize"] as? Int { config.embeddingSize = value }
             if let value = dict["threshold"] as? Double { config.threshold = value }
@@ -111,6 +122,27 @@ final class FaceMatcher {
                                reason: "MISSING_PORTRAIT")
         }
         guard let modelPath = resolveModelPath() else {
+            // Two different situations, and reporting both as "error" sends people debugging
+            // inference that never ran:
+            //
+            //   default asset absent  - the bank has not installed a model yet. Nothing is
+            //                           broken; on-device matching simply is not provisioned,
+            //                           which is exactly what "deferred" means. Installing the
+            //                           model is a governance step (src/models/README.md), so a
+            //                           build without it is an expected state, not a fault.
+            //   explicit asset absent - the app asked for a specific model and it is not in the
+            //                           bundle. That is a real misconfiguration.
+            //
+            // Neither is ever reported as a pass.
+            guard config.modelAssetExplicit else {
+                NSLog("[FaceMatcher] No face match model installed at the default resource name"
+                      + " (%@); reporting the match as deferred. See src/models/README.md.",
+                      config.modelAsset ?? "nil")
+                return MatchResult(status: "deferred", similarity: nil,
+                                   threshold: config.threshold, reason: "MODEL_NOT_INSTALLED")
+            }
+            NSLog("[FaceMatcher] Configured face match model not found in the bundle: %@",
+                  config.modelAsset ?? "nil")
             return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
                                reason: "MODEL_NOT_FOUND")
         }

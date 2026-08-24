@@ -120,9 +120,15 @@ var NfcDocumentReader = {
      *   "matched" / "notMatched" - a threshold is configured and the score was compared to it
      *   "review"                 - the comparison ran and `similarity` is real, but no threshold
      *                              is configured, so the decision is left to a human
-     *   "deferred"               - matching disabled (modelAsset explicitly cleared)
+     *   "deferred"               - no comparison ran and nothing is broken. `reason` says which:
+     *                              MODEL_NOT_INSTALLED  - no model at the default asset path, so
+     *                                                     on-device matching is not provisioned
+     *                                                     yet (see src/models/README.md)
+     *                              NO_MODEL_CONFIGURED  - matching disabled (modelAsset was
+     *                                                     explicitly passed as null or "")
      *   "error"                  - never reported as a pass. `reason` says which:
-     *                              MODEL_NOT_FOUND           - the .tflite is not in app assets
+     *                              MODEL_NOT_FOUND           - a modelAsset was passed explicitly
+     *                                                          but is not in app assets
      *                              EMBEDDING_LENGTH_MISMATCH - model output != embeddingSize
      *                              MISSING_PORTRAIT          - a face was not detected in one image
      *                              MATCHER_FAILED            - anything else; check logcat/Console

@@ -35,6 +35,11 @@ The weights are not committed because they are not ours to choose unilaterally:
 Nothing else is required. `FaceMatcher` defaults `modelAsset` to `mobilefacenet.tflite`, so
 `readNFC(..., { liveness: true })` picks it up with no JS options.
 
+Until the model is installed, `match.status` is `"deferred"` with reason `"MODEL_NOT_INSTALLED"`
+and no similarity is returned — the feature is un-provisioned, not broken. A `modelAsset` passed
+explicitly in `faceMatch` and then not found is reported as `"error"` / `"MODEL_NOT_FOUND"`,
+because that is a real misconfiguration.
+
 ## Model expectations
 
 The defaults target a MobileFaceNet-family model:

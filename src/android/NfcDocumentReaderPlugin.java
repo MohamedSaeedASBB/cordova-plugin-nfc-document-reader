@@ -287,7 +287,15 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (json == null) {
             return config;
         }
-        config.modelAsset = json.optString("modelAsset", null);
+        // Only touch modelAsset when the caller actually sent the key: optString's fallback
+        // fires for an absent key too, so reading it unconditionally wiped the documented
+        // default and silently disabled matching for anyone passing { threshold: ... } alone.
+        if (json.has("modelAsset")) {
+            config.modelAssetExplicit = true;
+            config.modelAsset = json.isNull("modelAsset")
+                    ? null                                      // explicit opt-out
+                    : json.optString("modelAsset", config.modelAsset);
+        }
         config.inputSize = json.optInt("inputSize", config.inputSize);
         config.embeddingSize = json.optInt("embeddingSize", config.embeddingSize);
         if (json.has("threshold") && !json.isNull("threshold")) {
