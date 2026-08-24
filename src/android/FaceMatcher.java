@@ -153,7 +153,8 @@ public class FaceMatcher {
             result.reason = "MISSING_PORTRAIT";
             return result;
         }
-        if (!modelAssetExists(config.modelAsset)) {
+        String resolvedModelPath = resolveAssetPath(config.modelAsset);
+        if (resolvedModelPath == null) {
             // Two different situations, and reporting both as "error" sends people debugging
             // inference that never ran:
             //
@@ -167,14 +168,16 @@ public class FaceMatcher {
             //
             // Neither is ever reported as a pass.
             if (!config.modelAssetExplicit) {
-                Log.i(TAG, "No face match model installed at the default asset path ("
-                        + config.modelAsset + "); reporting the match as deferred."
+                Log.i(TAG, "No face match model installed. Searched: "
+                        + java.util.Arrays.toString(candidatePaths(config.modelAsset))
+                        + "; reporting the match as deferred."
                         + " See src/models/README.md to install one.");
                 result.status = "deferred";
                 result.reason = "MODEL_NOT_INSTALLED";
                 return result;
             }
-            Log.w(TAG, "Configured face match model not found in assets: " + config.modelAsset
+            Log.w(TAG, "Configured face match model not found. Searched: "
+                    + java.util.Arrays.toString(candidatePaths(config.modelAsset))
                     + " — see src/models/README.md");
             result.status = "error";
             result.reason = "MODEL_NOT_FOUND";
@@ -183,7 +186,7 @@ public class FaceMatcher {
 
         Interpreter interpreter = null;
         try {
-            interpreter = new Interpreter(loadModel(config.modelAsset));
+            interpreter = new Interpreter(loadModel(resolvedModelPath));
 
             float[] documentEmbedding = embed(interpreter, documentPortrait, documentFaceBox);
             float[] livenessEmbedding = embed(interpreter, livenessPortrait, livenessFaceBox);
@@ -282,13 +285,34 @@ public class FaceMatcher {
         return buffer;
     }
 
-    /** Cheap existence probe, so a missing model is reported as such instead of as a crash. */
-    private boolean modelAssetExists(String assetPath) {
-        try (InputStream in = context.getAssets().open(assetPath)) {
-            return true;
-        } catch (Exception e) {
-            return false;
+    /**
+     * Where a host build may stage the model. A bare name is the documented location, but Cordova
+     * also stages web assets under www/, and a wrong resource-file target silently puts the file
+     * nowhere at all — which is exactly how this shipped once, reporting MODEL_NOT_INSTALLED with
+     * the model sitting in the repository. Trying the plausible locations and logging what was
+     * tried makes the next such mistake self-evident instead of invisible.
+     */
+    private String[] candidatePaths(String assetPath) {
+        String name = assetPath;
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        return new String[] { assetPath, "www/" + name, "public/" + name, name };
+    }
+
+    /** First asset path that actually opens, or null. */
+    private String resolveAssetPath(String assetPath) {
+        for (String candidate : candidatePaths(assetPath)) {
+            try (InputStream in = context.getAssets().open(candidate)) {
+                if (!candidate.equals(assetPath)) {
+                    Log.i(TAG, "Face match model found at " + candidate
+                            + " rather than " + assetPath);
+                }
+                return candidate;
+            } catch (Exception ignored) {
+                // Try the next location.
+            }
         }
+        return null;
     }
 
     /**

@@ -42,13 +42,13 @@
                      Cordova fails plugin install if a resource-file src does not exist, which is why
              this is commented rather than live. See src/models/README.md.
         <resource-file src="src/models/mobilefacenet.tflite"
-                       target="app/src/main/assets/mobilefacenet.tflite" />
+                       target="assets/mobilefacenet.tflite" />
 
         <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
              Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because
              the document signer cannot be traced to an issuing state. See src/csca/README.md.
         <resource-file src="src/csca/csca_master_list.pem"
-                       target="app/src/main/assets/csca_master_list.pem" />
+                       target="assets/csca_master_list.pem" />
         -->
 
         <resource-file src="src/android/nfc_tech_filter.xml" target="res/xml/nfc_tech_filter.xml" />
