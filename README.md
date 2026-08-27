@@ -329,6 +329,73 @@ If you read one field, read `passiveAuthentication.status`:
 }
 ```
 
+### Multi-part fields: `placeOfBirthLines`, `permanentAddressLines`
+
+DG11 separates a field's components with `<`, and issuers use that freely. On an Algerian ID the
+"permanent address" field carries **three** values — marital status, an Arabic value, and a blood
+group — and the place of birth is stated twice, Latin then Arabic.
+
+Joined for display, those read as `"M, الجزائر, AB+"` and `"BORDJ EL KIFFAN, برج الكيفان"`: one
+looks like a nonsensical address, the other like "city, region". Neither is what it appears to be.
+
+So the components are returned as arrays too:
+
+```json
+"permanentAddress":      "M, الجزائر, AB+",
+"permanentAddressLines": ["M", "الجزائر", "AB+"],
+"placeOfBirth":          "BORDJ EL KIFFAN, برج الكيفان",
+"placeOfBirthLines":     ["BORDJ EL KIFFAN", "برج الكيفان"]
+```
+
+**Build logic on the arrays and treat the joined strings as display text.** What each component
+means is the issuer's convention, not something the plugin can tell you — confirm the mapping
+against the physical document per issuing country before storing it in named fields.
+
+### Raw data groups
+
+Pass `includeRawDataGroups: true` to `readNFC` to get each data group exactly as read from the
+chip:
+
+```json
+"rawDataGroups": { "1": "<base64>", "2": "<base64>", "11": "<base64>",
+                   "12": "<base64>", "sod": "<base64>" }
+```
+
+These are the bytes passive authentication hashes, so a backend can **re-verify the issuer's
+signature itself** rather than trusting the handset's verdict — worth doing for a decision that
+matters, since anything a phone reports about its own integrity is only as trustworthy as the
+phone. They also let a backend re-decode text this plugin got wrong.
+
+Off by default: it is a second full copy of every field including the portrait, in the rawest form
+the holder's data takes, and it roughly doubles the payload.
+
+### Non-Latin text and `textEncoding`
+
+ICAO 9303 specifies UTF-8 for the DG11/DG12 text fields, and most documents comply. Some do not:
+an Algerian ID in testing stored its Arabic fields in a single-byte Arabic code page, so UTF-8
+decoding turned every Arabic letter into `U+FFFD` and the holder's Arabic name arrived as a row of
+boxes.
+
+The plugin detects that and decodes the affected fields again from the chip's raw bytes — the same
+bytes passive authentication hashes, so they are known to be exactly what the issuer signed. Only
+fields that actually failed are touched, so a conformant document is unaffected.
+
+`textEncoding` reports the outcome:
+
+| Value | Meaning |
+|---|---|
+| `null` | the document was conformant; text decoded as UTF-8 |
+| `"windows-1256"` / `"ISO-8859-6"` | text was recovered using this code page |
+
+**A non-null value means the encoding was inferred, not declared.** The candidate code pages agree
+on the core Arabic letters and differ elsewhere, so recovered names should be checked against the
+physical document before being trusted as a customer record. The encoding is chosen once per
+document from all its damaged fields together, so fields cannot disagree with each other.
+
+This applies to Android. On iOS the library returns nil for a field it cannot decode as UTF-8, so
+the same document yields empty fields rather than boxes — the equivalent recovery is not yet
+implemented there.
+
 ### Images in the payload
 
 Every image is base64 JPEG or PNG, ready to drop into an `<img src="data:image/jpeg;base64,…">`.
@@ -383,16 +450,26 @@ the two `<!-- CSCA trust store -->` blocks in `plugin.xml`, and reinstall.
 Without it: `passiveAuthentication.status = "notVerified"`, `reasons = ["NO_TRUST_ANCHORS"]`. See
 [`src/csca/README.md`](src/csca/README.md).
 
-### Threshold
+### Threshold — applied in the backend, not on the device
 
-Built into the plugin at **0.90** cosine similarity, so nothing is passed from JavaScript.
+**No threshold is applied on the device.** The plugin computes the cosine similarity and returns
+it; the backend holds the threshold and makes the decision. So the normal result is:
 
-**It is a policy floor, not a measured operating point.** The false-accept and false-reject rates
-it produces on this customer population have not been established. Cosine similarity runs from -1
-to 1, so 0.90 requires the two embeddings to be nearly identical — and a chip portrait is
-low-resolution and often years old next to a live selfie. Expect genuine pairs to fall below it
-and be reported as `notMatched` until the number is calibrated; route those to human review rather
-than to a rejection.
+```json
+"match": { "status": "review", "similarity": 0.6421, "threshold": null,
+           "reason": "NO_THRESHOLD_CONFIGURED", "onDevice": true }
+```
+
+and `verification.outcome` is `review` with `faceMatchScore` populated — the score is real, the
+decision is yours to make server-side.
+
+This is the right split. A decision boundary on the handset cannot be changed without an app
+release, cannot be audited centrally, and sits on a device an attacker controls. In the backend it
+can be tuned, versioned and recalibrated as `tools/face-match-calibration` produces better FAR/FRR
+numbers.
+
+`faceMatch: { threshold: 0.6 }` still works and makes the device decide, which is useful for
+testing. Do not use it in production unless you intend to ship the decision boundary to handsets.
 
 ## Tools
 

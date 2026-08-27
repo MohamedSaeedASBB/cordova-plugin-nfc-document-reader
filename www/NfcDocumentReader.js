@@ -49,7 +49,7 @@ var ISSUE_TEXT = {
     EMBEDDING_LENGTH_MISMATCH:   ["warning",  "The face matching model is misconfigured."],
     MISSING_PORTRAIT:            ["warning",  "A face could not be found in the chip photo or the selfie."],
     MATCHER_FAILED:              ["warning",  "The face comparison could not be completed."],
-    NO_THRESHOLD_CONFIGURED:     ["warning",  "No face match threshold is set, so the score needs a human decision."],
+    NO_THRESHOLD_CONFIGURED:     ["info",     "Face match score returned for the backend to decide on."],
     // Raised by summarise itself rather than by the native layer, so that every failure carries a
     // reason a person can act on.
     LIVENESS_FAILED:             ["blocking", "The liveness check did not pass — no live person was confirmed in front of the camera."],
@@ -168,6 +168,7 @@ function summarise(result) {
     }
 
     var blocking = issues.filter(function(i) { return i.severity === "blocking"; });
+    var warnings = issues.filter(function(i) { return i.severity === "warning"; });
 
     return {
         outcome: outcome,                       // "pass" | "review" | "fail"
@@ -182,6 +183,7 @@ function summarise(result) {
         faceMatchThreshold: faceMatchThreshold,
         issues: issues,
         blockingIssueCount: blocking.length,
+        warningCount: warnings.length,
         summary: buildSummary(outcome, documentAuthentic, holderPresent, faceMatch, blocking)
     };
 }
@@ -200,9 +202,9 @@ function buildSummary(outcome, documentAuthentic, holderPresent, faceMatch, bloc
     if (holderPresent === "yes") parts.push("A live person was present.");
     else if (holderPresent === "notChecked") parts.push("Presence of the holder was not checked.");
     if (faceMatch === "matched") parts.push("Their face matches the chip photo.");
-    else if (faceMatch === "review") parts.push("The face comparison needs a human decision.");
+    else if (faceMatch === "review") parts.push("Face match score returned for a decision.");
     else if (faceMatch === "notAvailable") parts.push("Face comparison was not available.");
-    if (outcome === "review") parts.push("Send to manual review.");
+    if (outcome === "review") parts.push("Decide in the backend or send to manual review.");
     return parts.join(" ");
 }
 
@@ -302,8 +304,10 @@ var NfcDocumentReader = {
      *     documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
+     *     placeOfBirthLines[], permanentAddressLines[],   // the issuer's own components
+     *     rawDataGroups,                                  // only with includeRawDataGroups: true
      *     issuingAuthority, dateOfIssue, endorsementsAndObservations,
-     *     dataGroupsRead, authentication, readErrors
+     *     dataGroupsRead, authentication, textEncoding, readErrors
      *   }
      *
      * BREAKING CHANGE: `bacSucceeded` and `chipAuthSucceeded` are gone, replaced by
@@ -391,8 +395,8 @@ var NfcDocumentReader = {
      *
      * `match.status`:
      *   "matched" / "notMatched" - a threshold is configured and the score was compared to it
-     *   "review"                 - the comparison ran and `similarity` is real, but the threshold
-     *                              was explicitly cleared, so the decision is left to a human
+     *   "review"                 - the normal result: the comparison ran, `similarity` is real,
+     *                              and no threshold was applied, so the backend decides
      *   "deferred"               - no comparison ran and nothing is broken. `reason` says which:
      *                              MODEL_NOT_INSTALLED  - no model at the default asset path, so
      *                                                     on-device matching is not provisioned
@@ -407,12 +411,12 @@ var NfcDocumentReader = {
      *                              MATCHER_FAILED            - anything else; check logcat/Console
      *                                                          for tag "FaceMatcher"
      *
-     * The threshold is built into the plugin (0.9) so nothing has to be passed from JavaScript.
-     * It is a policy floor, not a measured operating point: the false-accept and false-reject
-     * rates it produces on this customer population have not been established. Cosine similarity
-     * runs from -1 to 1, and chip portraits are typically low-resolution and years old, so expect
-     * genuine pairs to fall below 0.9 and be reported as "notMatched" until it is calibrated.
-     * tools/face-match-calibration derives a defensible value. See src/models/README.md.
+     * No threshold is applied on the device: the plugin returns the similarity and the backend
+     * decides. The normal result is status "review" with a real `similarity` and a null
+     * `threshold`, and `verification.outcome` is "review" with `faceMatchScore` populated.
+     * A decision boundary on the handset cannot be changed without a release, cannot be audited
+     * centrally, and sits on a device an attacker controls. Passing faceMatch.threshold makes the
+     * device decide instead — useful for testing, not for production.
      *
      * Everything needed by the back office is in this one object: the chip data groups, the chip
      * portrait (faceImageBase64), the liveness portrait (liveness.faceImageBase64), the aligned
@@ -420,6 +424,11 @@ var NfcDocumentReader = {
      *
      * @param {Object} [options]
      * @param {boolean|Object} [options.liveness] - true for defaults, or a checkLiveness options object
+     * @param {boolean} [options.includeRawDataGroups=false] - Also return each data group's raw
+     *                 bytes, base64, keyed by number plus "sod". Lets a backend re-verify the
+     *                 issuer's signature itself instead of trusting the handset, and re-decode any
+     *                 text this plugin got wrong. Off by default: it is a second full copy of every
+     *                 field and the portrait, in the rawest form the holder's data takes.
      * @param {Object} [options.passiveAuth] - Passive-authentication overrides; all optional
      * @param {string|null} [options.passiveAuth.trustStoreAsset="csca_master_list.pem"] - PEM bundle
      *                 of CSCA certificates in app assets. Pass null to skip the issuer check, which
@@ -428,9 +437,9 @@ var NfcDocumentReader = {
      * @param {string} [options.faceMatch.modelAsset="mobilefacenet.tflite"] - .tflite model in app assets
      * @param {number} [options.faceMatch.inputSize=112] - Model input edge (112 MobileFaceNet, 160 FaceNet)
      * @param {number} [options.faceMatch.embeddingSize=192] - Model output vector length
-     * @param {number|null} [options.faceMatch.threshold=0.9] - Cosine-similarity threshold, in
-     *                 [-1, 1]. Built in, so it normally needs no value here. Pass null to clear it
-     *                 and get the score with status "review" instead of a pass/fail.
+     * @param {number} [options.faceMatch.threshold] - Cosine-similarity threshold in [-1, 1].
+     *                 Omitted by design: the backend holds the threshold and decides. Passing one
+     *                 makes the device decide, which is for testing rather than production.
      */
     readNFC: function(success, error, mrzData, options) {
         exec(function(data) {

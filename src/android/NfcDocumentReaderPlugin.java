@@ -51,6 +51,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private String pendingDateOfExpiry;
     private String pendingRawMrzInfo = "";
     private JSONObject pendingPassiveAuthConfig;
+    private boolean pendingIncludeRawDataGroups = false;
     private volatile boolean nfcReadingActive = false;
 
     /**
@@ -365,7 +366,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             // instead of a pass/fail. Absent means keep the built-in value.
             config.threshold = json.isNull("threshold")
                     ? null
-                    : json.optDouble("threshold", FaceMatcher.DEFAULT_THRESHOLD);
+                    : json.optDouble("threshold", Double.NaN);
+            if (config.threshold != null && config.threshold.isNaN()) {
+                config.threshold = null;      // unparseable value: decide in the backend
+            }
         }
         return config;
     }
@@ -417,6 +421,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         pendingLivenessOptionsJson = null;
         pendingFaceMatchConfig = null;
         pendingPassiveAuthConfig = null;
+        pendingIncludeRawDataGroups = false;
 
         // Optional second argument: { liveness: {...}, faceMatch: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -434,6 +439,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 if (readOptions.has("passiveAuth") && !readOptions.isNull("passiveAuth")) {
                     pendingPassiveAuthConfig = readOptions.getJSONObject("passiveAuth");
                 }
+                pendingIncludeRawDataGroups =
+                        readOptions.optBoolean("includeRawDataGroups", false);
             } catch (JSONException e) {
                 Log.w(TAG, "Error parsing readNFC options: " + e.getMessage());
             }
@@ -626,6 +633,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     // rebuild, and so a caller can point at a test bundle.
                     documentReader.setPassiveAuthentication(cordova.getActivity().getApplicationContext(),
                             parsePassiveAuthConfig(pendingPassiveAuthConfig));
+                    documentReader.setIncludeRawDataGroups(pendingIncludeRawDataGroups);
 
                     documentReader.readDocument(tag, pendingDocumentNumber,
                         pendingDateOfBirth, pendingDateOfExpiry,

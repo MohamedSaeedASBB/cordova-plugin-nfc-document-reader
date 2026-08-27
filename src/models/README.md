@@ -64,21 +64,14 @@ A different family needs the matching `inputSize` and `embeddingSize` passed in 
 
 ## Setting the threshold
 
-The threshold is built into the plugin at **0.90** (`FaceMatcher.DEFAULT_THRESHOLD` /
-`FaceMatcher.defaultThreshold`), so nothing needs to be passed from JavaScript.
+**The threshold lives in the backend.** The device computes the cosine similarity and returns it
+with `match.status = "review"`; the backend applies the threshold and decides. A decision boundary
+shipped to handsets cannot be changed without a release, cannot be audited centrally, and sits on
+a device an attacker controls.
 
-**It is a policy floor, not a measured operating point.** Nobody has yet established what
-false-accept and false-reject rates 0.90 produces on this customer population. Cosine similarity
-runs from -1 to 1, so 0.90 is a demanding bar: it requires the two embeddings to be nearly the
-same vector. Chip portraits are typically low-resolution and several years old, taken under
-different lighting and optics from a live selfie, so genuine pairs will often score below it and
-be reported as `"notMatched"`. Treat that as the expected behaviour until the number is
-calibrated, and route `"notMatched"` to human review rather than to a rejection.
+That makes this tool the source of the number the backend should hold.
 
-Passing `faceMatch: { threshold: null }` clears it: the match still runs and reports a real
-similarity, but `match.status` is `"review"` and the decision stays with a human.
-
-To validate or revise the threshold: run genuine and impostor pairs representative of the customer population
+To derive or revise it: run genuine and impostor pairs representative of the customer population
 **and** the capture conditions through this matcher, sweep the similarity threshold, and pick the
 operating point that meets the bank's false-accept target. Record the resulting FAR/FRR alongside
 it — those numbers, not the threshold alone, are what a reviewer needs.
