@@ -639,6 +639,11 @@ public class NfcDocumentReader {
                 readErrors.put(0, e.getMessage() != null ? e.getMessage() : "Not available");
             }
 
+            // ---- Recover non-Latin text that UTF-8 decoding destroyed ----
+            // Runs before the raw bytes are dropped, and only rewrites fields that actually came
+            // back with replacement characters. See MrtdTextDecoder.
+            documentData.textEncoding = MrtdTextDecoder.recover(documentData, rawDgBytes);
+
             // ---- Passive authentication ----
             // Runs last because it needs both the SOD and every data group's raw bytes. Skipped
             // only when no context was supplied, in which case the payload reports "notVerified"

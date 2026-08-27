@@ -57,6 +57,12 @@ public class DocumentData {
     public String accessProtocol = null;
     /** Result of the ICAO 9303 passive-authentication checks, or null if they did not run. */
     public PassiveAuthenticator.Result passiveAuthentication = null;
+    /**
+     * Encoding used to recover DG11/DG12 text, or null when the document was conformant and the
+     * fields decoded as UTF-8. A non-null value means the issuer did not use UTF-8 and the text
+     * was decoded again with a code page chosen by inspection — see MrtdTextDecoder.
+     */
+    public String textEncoding = null;
     public Map<Integer, String> readErrors = new HashMap<>();
 
     /**
@@ -115,6 +121,10 @@ public class DocumentData {
             dgArray.put(dg);
         }
         json.put("dataGroupsRead", dgArray);
+        // Null for a conformant document. Non-null names the code page the text had to be
+        // recovered with, so a reviewer can tell inspected text from text the issuer's own
+        // encoding produced.
+        json.put("textEncoding", textEncoding != null ? textEncoding : JSONObject.NULL);
 
         // ---- Authentication ----
         // The old payload reported bacSucceeded plus a chipAuthSucceeded that was set from the

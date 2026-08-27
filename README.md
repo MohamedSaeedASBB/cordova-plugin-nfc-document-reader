@@ -329,6 +329,33 @@ If you read one field, read `passiveAuthentication.status`:
 }
 ```
 
+### Non-Latin text and `textEncoding`
+
+ICAO 9303 specifies UTF-8 for the DG11/DG12 text fields, and most documents comply. Some do not:
+an Algerian ID in testing stored its Arabic fields in a single-byte Arabic code page, so UTF-8
+decoding turned every Arabic letter into `U+FFFD` and the holder's Arabic name arrived as a row of
+boxes.
+
+The plugin detects that and decodes the affected fields again from the chip's raw bytes — the same
+bytes passive authentication hashes, so they are known to be exactly what the issuer signed. Only
+fields that actually failed are touched, so a conformant document is unaffected.
+
+`textEncoding` reports the outcome:
+
+| Value | Meaning |
+|---|---|
+| `null` | the document was conformant; text decoded as UTF-8 |
+| `"windows-1256"` / `"ISO-8859-6"` | text was recovered using this code page |
+
+**A non-null value means the encoding was inferred, not declared.** The candidate code pages agree
+on the core Arabic letters and differ elsewhere, so recovered names should be checked against the
+physical document before being trusted as a customer record. The encoding is chosen once per
+document from all its damaged fields together, so fields cannot disagree with each other.
+
+This applies to Android. On iOS the library returns nil for a field it cannot decode as UTF-8, so
+the same document yields empty fields rather than boxes — the equivalent recovery is not yet
+implemented there.
+
 ### Images in the payload
 
 Every image is base64 JPEG or PNG, ready to drop into an `<img src="data:image/jpeg;base64,…">`.

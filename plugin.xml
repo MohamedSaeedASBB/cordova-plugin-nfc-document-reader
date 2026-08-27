@@ -71,6 +71,7 @@
         <source-file src="src/android/FaceMatcher.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/PassiveAuthenticator.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/SystemBarInsets.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/MrtdTextDecoder.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />

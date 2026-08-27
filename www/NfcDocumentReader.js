@@ -305,7 +305,7 @@ var NfcDocumentReader = {
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
      *     issuingAuthority, dateOfIssue, endorsementsAndObservations,
-     *     dataGroupsRead, authentication, readErrors
+     *     dataGroupsRead, authentication, textEncoding, readErrors
      *   }
      *
      * BREAKING CHANGE: `bacSucceeded` and `chipAuthSucceeded` are gone, replaced by
