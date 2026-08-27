@@ -329,6 +329,46 @@ If you read one field, read `passiveAuthentication.status`:
 }
 ```
 
+### Multi-part fields: `placeOfBirthLines`, `permanentAddressLines`
+
+DG11 separates a field's components with `<`, and issuers use that freely. On an Algerian ID the
+"permanent address" field carries **three** values — marital status, an Arabic value, and a blood
+group — and the place of birth is stated twice, Latin then Arabic.
+
+Joined for display, those read as `"M, الجزائر, AB+"` and `"BORDJ EL KIFFAN, برج الكيفان"`: one
+looks like a nonsensical address, the other like "city, region". Neither is what it appears to be.
+
+So the components are returned as arrays too:
+
+```json
+"permanentAddress":      "M, الجزائر, AB+",
+"permanentAddressLines": ["M", "الجزائر", "AB+"],
+"placeOfBirth":          "BORDJ EL KIFFAN, برج الكيفان",
+"placeOfBirthLines":     ["BORDJ EL KIFFAN", "برج الكيفان"]
+```
+
+**Build logic on the arrays and treat the joined strings as display text.** What each component
+means is the issuer's convention, not something the plugin can tell you — confirm the mapping
+against the physical document per issuing country before storing it in named fields.
+
+### Raw data groups
+
+Pass `includeRawDataGroups: true` to `readNFC` to get each data group exactly as read from the
+chip:
+
+```json
+"rawDataGroups": { "1": "<base64>", "2": "<base64>", "11": "<base64>",
+                   "12": "<base64>", "sod": "<base64>" }
+```
+
+These are the bytes passive authentication hashes, so a backend can **re-verify the issuer's
+signature itself** rather than trusting the handset's verdict — worth doing for a decision that
+matters, since anything a phone reports about its own integrity is only as trustworthy as the
+phone. They also let a backend re-decode text this plugin got wrong.
+
+Off by default: it is a second full copy of every field including the portrait, in the rawest form
+the holder's data takes, and it roughly doubles the payload.
+
 ### Non-Latin text and `textEncoding`
 
 ICAO 9303 specifies UTF-8 for the DG11/DG12 text fields, and most documents comply. Some do not:

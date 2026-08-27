@@ -304,6 +304,8 @@ var NfcDocumentReader = {
      *     documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
+     *     placeOfBirthLines[], permanentAddressLines[],   // the issuer's own components
+     *     rawDataGroups,                                  // only with includeRawDataGroups: true
      *     issuingAuthority, dateOfIssue, endorsementsAndObservations,
      *     dataGroupsRead, authentication, textEncoding, readErrors
      *   }
@@ -422,6 +424,11 @@ var NfcDocumentReader = {
      *
      * @param {Object} [options]
      * @param {boolean|Object} [options.liveness] - true for defaults, or a checkLiveness options object
+     * @param {boolean} [options.includeRawDataGroups=false] - Also return each data group's raw
+     *                 bytes, base64, keyed by number plus "sod". Lets a backend re-verify the
+     *                 issuer's signature itself instead of trusting the handset, and re-decode any
+     *                 text this plugin got wrong. Off by default: it is a second full copy of every
+     *                 field and the portrait, in the rawest form the holder's data takes.
      * @param {Object} [options.passiveAuth] - Passive-authentication overrides; all optional
      * @param {string|null} [options.passiveAuth.trustStoreAsset="csca_master_list.pem"] - PEM bundle
      *                 of CSCA certificates in app assets. Pass null to skip the issuer check, which

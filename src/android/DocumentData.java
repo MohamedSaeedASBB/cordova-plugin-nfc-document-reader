@@ -42,6 +42,17 @@ public class DocumentData {
     public String personalSummary = "";
     public String placeOfBirth = "";
     public String permanentAddress = "";
+    /**
+     * The issuer's own components for the two fields above, before they are flattened.
+     *
+     * DG11 separates components with '<', and jmrtd returns them as a list. Joining that list
+     * hides its structure: an Algerian ID puts marital status, an Arabic value and a blood group
+     * in the address field, which reads as one nonsensical address once joined, and states the
+     * place of birth twice — Latin then Arabic — which reads as "city, region". Application logic
+     * should use these arrays and treat the joined strings above as display text.
+     */
+    public List<String> placeOfBirthLines = new ArrayList<>();
+    public List<String> permanentAddressLines = new ArrayList<>();
     public String telephone = "";
 
     // DG12 - Additional Document Details
@@ -57,6 +68,18 @@ public class DocumentData {
     public String accessProtocol = null;
     /** Result of the ICAO 9303 passive-authentication checks, or null if they did not run. */
     public PassiveAuthenticator.Result passiveAuthentication = null;
+    /**
+     * Raw data groups exactly as read from the chip, keyed by data group number plus "sod",
+     * populated only when the caller asks for them. These are what passive authentication hashes,
+     * so a backend can re-verify the issuer's signature itself rather than trusting the handset's
+     * verdict — and can re-decode any text this plugin got wrong.
+     *
+     * Off by default: they are a second full copy of every field and the portrait, and they are
+     * holder data in its rawest form.
+     */
+    public Map<Integer, byte[]> rawDataGroups = null;
+    public byte[] rawSod = null;
+
     /**
      * Encoding used to recover DG11/DG12 text, or null when the document was conformant and the
      * fields decoded as UTF-8. A non-null value means the issuer did not use UTF-8 and the text
@@ -108,6 +131,8 @@ public class DocumentData {
         json.put("personalSummary", personalSummary);
         json.put("placeOfBirth", placeOfBirth);
         json.put("permanentAddress", permanentAddress);
+        json.put("placeOfBirthLines", toJsonArray(placeOfBirthLines));
+        json.put("permanentAddressLines", toJsonArray(permanentAddressLines));
         json.put("telephone", telephone);
 
         // DG12
@@ -125,6 +150,22 @@ public class DocumentData {
         // recovered with, so a reviewer can tell inspected text from text the issuer's own
         // encoding produced.
         json.put("textEncoding", textEncoding != null ? textEncoding : JSONObject.NULL);
+
+        // Raw data groups, base64, only when requested. Keyed by data group number, plus "sod",
+        // which is the one a backend needs to re-run passive authentication independently.
+        if (rawDataGroups != null || rawSod != null) {
+            JSONObject raw = new JSONObject();
+            if (rawDataGroups != null) {
+                for (Map.Entry<Integer, byte[]> entry : rawDataGroups.entrySet()) {
+                    raw.put(String.valueOf(entry.getKey()),
+                            Base64.encodeToString(entry.getValue(), Base64.NO_WRAP));
+                }
+            }
+            if (rawSod != null) {
+                raw.put("sod", Base64.encodeToString(rawSod, Base64.NO_WRAP));
+            }
+            json.put("rawDataGroups", raw);
+        }
 
         // ---- Authentication ----
         // The old payload reported bacSucceeded plus a chipAuthSucceeded that was set from the
@@ -148,6 +189,14 @@ public class DocumentData {
         json.put("readErrors", errorsObj);
 
         return json;
+    }
+
+    private static JSONArray toJsonArray(List<String> values) {
+        JSONArray array = new JSONArray();
+        if (values != null) {
+            for (String value : values) array.put(value);
+        }
+        return array;
     }
 
     /** Shape-compatible placeholder so consumers never have to handle a missing block. */

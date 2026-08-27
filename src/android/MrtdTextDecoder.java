@@ -118,10 +118,19 @@ final class MrtdTextDecoder {
             String phone = decodeWith(dg11, TAG_TELEPHONE, encodingUsed);
 
             if (name != null) data.fullNameOfHolder = name;
-            if (place != null) data.placeOfBirth = place;
-            if (address != null) data.permanentAddress = address;
             if (summary != null) data.personalSummary = summary;
             if (phone != null) data.telephone = phone;
+            // The raw value keeps DG11's '<' separators, so split them back into the components
+            // the rest of the payload exposes — otherwise a recovered field would arrive in a
+            // different shape from an undamaged one.
+            if (place != null) {
+                data.placeOfBirthLines = splitComponents(place);
+                data.placeOfBirth = join(data.placeOfBirthLines);
+            }
+            if (address != null) {
+                data.permanentAddressLines = splitComponents(address);
+                data.permanentAddress = join(data.permanentAddressLines);
+            }
 
             List<byte[]> otherNameValues = dg11.get(TAG_OTHER_NAMES);
             if (otherNameValues != null && !otherNameValues.isEmpty()) {
@@ -155,6 +164,26 @@ final class MrtdTextDecoder {
             if (isDamaged(value)) return true;
         }
         return false;
+    }
+
+    /** DG11 separates a field's components with '<'; runs of them are one separator. */
+    static List<String> splitComponents(String value) {
+        List<String> parts = new ArrayList<>();
+        if (value == null) return parts;
+        for (String part : value.split("<+")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) parts.add(trimmed);
+        }
+        return parts;
+    }
+
+    private static String join(List<String> parts) {
+        StringBuilder joined = new StringBuilder();
+        for (String part : parts) {
+            if (joined.length() > 0) joined.append(", ");
+            joined.append(part);
+        }
+        return joined.toString();
     }
 
     private static String decodeWith(Map<Integer, List<byte[]>> fields, int tag, String charsetName) {

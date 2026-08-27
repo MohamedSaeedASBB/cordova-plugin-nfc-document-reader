@@ -51,6 +51,16 @@ public class NfcDocumentReader {
 
     private Context passiveAuthContext;                 // needed to read the CSCA trust store
     private PassiveAuthenticator.Config passiveAuthConfig;
+    private boolean includeRawDataGroups = false;
+
+    /**
+     * Returns each data group's raw bytes in the result. Off by default: they duplicate every
+     * field and the portrait, and a backend only needs them to verify the chip independently or
+     * to decode text this plugin could not.
+     */
+    public void setIncludeRawDataGroups(boolean include) {
+        this.includeRawDataGroups = include;
+    }
 
     /**
      * Enables passive authentication for the next read. Without it the chip data is returned
@@ -593,11 +603,19 @@ public class NfcDocumentReader {
                 documentData.personalSummary = safeString(dg11File.getPersonalSummary());
                 try {
                     List<String> pob = dg11File.getPlaceOfBirth();
-                    if (pob != null) documentData.placeOfBirth = joinStrings(pob, ", ");
+                    if (pob != null) {
+                        documentData.placeOfBirth = joinStrings(pob, ", ");
+                        documentData.placeOfBirthLines = pob;
+                    }
                 } catch (Exception ignored) {}
                 try {
                     List<String> addr = dg11File.getPermanentAddress();
-                    if (addr != null) documentData.permanentAddress = joinStrings(addr, ", ");
+                    if (addr != null) {
+                        // Kept unflattened: this field carries several distinct attributes on some
+                        // documents, not one address.
+                        documentData.permanentAddress = joinStrings(addr, ", ");
+                        documentData.permanentAddressLines = addr;
+                    }
                 } catch (Exception ignored) {}
                 documentData.telephone = safeString(dg11File.getTelephone());
 
@@ -630,9 +648,10 @@ public class NfcDocumentReader {
             // ---- Read SOD - Document Security Object ----
             if (listener != null) listener.onReadingDataGroup(0, "Security Object");
             SODFile sodFile = null;
+            byte[] sodBytes = null;
             try {
-                InputStream sodIn = passportService.getInputStream(PassportService.EF_SOD);
-                sodFile = new SODFile(sodIn);
+                sodBytes = readAllBytes(passportService.getInputStream(PassportService.EF_SOD));
+                sodFile = new SODFile(new ByteArrayInputStream(sodBytes));
                 Log.d(TAG, "SOD read successfully");
             } catch (Exception e) {
                 Log.w(TAG, "SOD not available: " + e.getMessage());
@@ -655,6 +674,13 @@ public class NfcDocumentReader {
             } else {
                 Log.w(TAG, "Passive authentication skipped: no context configured");
             }
+            // Handed to the caller only on request: they are a second full copy of every field
+            // and the portrait, in the rawest form the holder's data takes.
+            if (includeRawDataGroups) {
+                documentData.rawDataGroups = new LinkedHashMap<>(rawDgBytes);
+                documentData.rawSod = sodBytes;
+            }
+
             // The raw groups are holder data; drop them now that the hashes have been compared.
             rawDgBytes.clear();
 
