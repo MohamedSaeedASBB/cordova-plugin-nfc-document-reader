@@ -29,10 +29,11 @@ import TensorFlowLite
 ///      bank's false-accept target. Record the resulting FAR/FRR — those numbers, not the
 ///      threshold alone, are what a reviewer needs.
 ///
-/// The threshold is built in (`defaultThreshold`) so the app does not pass one from JavaScript.
-/// It is a policy floor, not a measured one: nobody has yet established what false-accept and
-/// false-reject rates it produces on this customer population, and that measurement is what
-/// tools/face-match-calibration exists to produce.
+/// No threshold is applied on the device. The matcher returns the similarity and the backend
+/// decides: the decision boundary belongs where it can be changed, audited and calibrated without
+/// shipping an app release, and where a handset cannot be persuaded to lower it.
+/// tools/face-match-calibration produces the FAR/FRR that justifies whatever value the backend
+/// holds.
 ///
 /// Until a model is installed, the match is reported as deferred ("MODEL_NOT_INSTALLED") rather
 /// than silently passing — an un-provisioned matcher is not a failed one. A model the caller asked
@@ -47,18 +48,6 @@ final class FaceMatcher {
     /// Default asset name, auto-installed by plugin.xml. See src/models/README.md.
     static let defaultModelAsset = "mobilefacenet.tflite"
 
-    /// Built-in decision boundary: a pair must reach this cosine similarity to be reported as a
-    /// match. Set by the bank as a policy floor so the app does not have to pass one in.
-    ///
-    /// This is a policy value, NOT a measured operating point. It has not been validated against
-    /// a labelled set of genuine and impostor pairs from this customer population, so the
-    /// false-accept and false-reject rates it produces are unknown. On this scale — cosine
-    /// similarity runs from -1 to 1 — 0.90 is a demanding bar, and chip portraits are typically
-    /// low-resolution and years old, so expect genuine pairs to fall below it and be reported as
-    /// "notMatched" until the threshold is calibrated. tools/face-match-calibration derives a
-    /// defensible value and the FAR/FRR to record beside it.
-    static let defaultThreshold = 0.90
-
     struct Config {
         /// Bundle resource name of the .tflite model. nil disables on-device matching.
         var modelAsset: String? = FaceMatcher.defaultModelAsset
@@ -71,9 +60,13 @@ final class FaceMatcher {
         /// Embedding length the model emits (192 for MobileFaceNet, 128/512 for FaceNet).
         var embeddingSize: Int = 192
         /// Cosine-similarity threshold at or above which the pair is reported as a match.
-        /// Defaults to `FaceMatcher.defaultThreshold`. Pass `faceMatch: { threshold: null }` to
-        /// clear it, which returns the score with status "review" and no pass/fail.
-        var threshold: Double? = FaceMatcher.defaultThreshold
+        ///
+        /// Nil by design: the decision lives in the backend, which holds the threshold and applies
+        /// it to the returned similarity. The device computes the score and reports status
+        /// "review" — it does not decide identity. A threshold passed here is honoured, which is
+        /// useful for testing, but it puts a copy of the decision boundary on the handset where it
+        /// cannot be changed without a release.
+        var threshold: Double?
         /// Crop padding applied around the detected face before embedding.
         var cropPadding: CGFloat = 0.25
 

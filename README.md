@@ -383,16 +383,26 @@ the two `<!-- CSCA trust store -->` blocks in `plugin.xml`, and reinstall.
 Without it: `passiveAuthentication.status = "notVerified"`, `reasons = ["NO_TRUST_ANCHORS"]`. See
 [`src/csca/README.md`](src/csca/README.md).
 
-### Threshold
+### Threshold — applied in the backend, not on the device
 
-Built into the plugin at **0.90** cosine similarity, so nothing is passed from JavaScript.
+**No threshold is applied on the device.** The plugin computes the cosine similarity and returns
+it; the backend holds the threshold and makes the decision. So the normal result is:
 
-**It is a policy floor, not a measured operating point.** The false-accept and false-reject rates
-it produces on this customer population have not been established. Cosine similarity runs from -1
-to 1, so 0.90 requires the two embeddings to be nearly identical — and a chip portrait is
-low-resolution and often years old next to a live selfie. Expect genuine pairs to fall below it
-and be reported as `notMatched` until the number is calibrated; route those to human review rather
-than to a rejection.
+```json
+"match": { "status": "review", "similarity": 0.6421, "threshold": null,
+           "reason": "NO_THRESHOLD_CONFIGURED", "onDevice": true }
+```
+
+and `verification.outcome` is `review` with `faceMatchScore` populated — the score is real, the
+decision is yours to make server-side.
+
+This is the right split. A decision boundary on the handset cannot be changed without an app
+release, cannot be audited centrally, and sits on a device an attacker controls. In the backend it
+can be tuned, versioned and recalibrated as `tools/face-match-calibration` produces better FAR/FRR
+numbers.
+
+`faceMatch: { threshold: 0.6 }` still works and makes the device decide, which is useful for
+testing. Do not use it in production unless you intend to ship the decision boundary to handsets.
 
 ## Tools
 

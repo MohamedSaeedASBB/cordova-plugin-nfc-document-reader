@@ -365,7 +365,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             // instead of a pass/fail. Absent means keep the built-in value.
             config.threshold = json.isNull("threshold")
                     ? null
-                    : json.optDouble("threshold", FaceMatcher.DEFAULT_THRESHOLD);
+                    : json.optDouble("threshold", Double.NaN);
+            if (config.threshold != null && config.threshold.isNaN()) {
+                config.threshold = null;      // unparseable value: decide in the backend
+            }
         }
         return config;
     }
