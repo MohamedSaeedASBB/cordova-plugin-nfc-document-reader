@@ -354,7 +354,7 @@ against the physical document per issuing country before storing it in named fie
 ### Raw data groups
 
 Pass `includeRawDataGroups: true` to `readNFC` to get each data group exactly as read from the
-chip:
+chip (both platforms):
 
 ```json
 "rawDataGroups": { "1": "<base64>", "2": "<base64>", "11": "<base64>",
@@ -392,9 +392,11 @@ on the core Arabic letters and differ elsewhere, so recovered names should be ch
 physical document before being trusted as a customer record. The encoding is chosen once per
 document from all its damaged fields together, so fields cannot disagree with each other.
 
-This applies to Android. On iOS the library returns nil for a field it cannot decode as UTF-8, so
-the same document yields empty fields rather than boxes — the equivalent recovery is not yet
-implemented there.
+Both platforms do this, but the failure they recover from looks different and is easy to misread.
+Android's decoder substitutes `U+FFFD` per unreadable byte, so damage shows as boxes. iOS returns
+nil for the whole field, so the same document arrives with **empty fields** — which reads as "this
+document has no place of birth" rather than as an error. Detection therefore works from the raw
+bytes on both, not from the decoded string.
 
 ### Images in the payload
 

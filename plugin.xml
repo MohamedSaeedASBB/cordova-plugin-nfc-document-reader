@@ -136,6 +136,7 @@
         <source-file src="src/ios/ImageCompressor.swift" />
         <source-file src="src/ios/FaceComparison.swift" />
         <source-file src="src/ios/FaceMatcher.swift" />
+        <source-file src="src/ios/MrtdTextDecoder.swift" />
 
         <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
              Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because

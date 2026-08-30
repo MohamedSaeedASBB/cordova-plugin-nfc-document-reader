@@ -15,6 +15,11 @@ class NfcDocumentReaderWrapper {
     /// Android. See src/csca/README.md.
     static let defaultTrustStoreResource = "csca_master_list.pem"
 
+    /// Returns each data group's raw bytes in the result. Off by default: they duplicate every
+    /// field and the portrait, and a backend only needs them to verify the chip independently or
+    /// to decode text this plugin could not.
+    var includeRawDataGroups = false
+
     /// Resource name (or absolute path) of the PEM bundle of CSCA certificates used to decide
     /// whether the document signer is trusted. nil disables the issuer check, which caps passive
     /// authentication at "notVerified".
@@ -326,17 +331,56 @@ class NfcDocumentReaderWrapper {
         // DG11 - Additional Personal Details
         let lastName = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
         let firstName = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
-        data["fullNameOfHolder"] = (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
+        // DG11/DG12 text, recovered when the issuer did not use UTF-8. On iOS a field that will
+        // not decode comes back nil rather than as replacement characters, so the same
+        // non-conformant document that shows boxes on Android shows *empty fields* here — which
+        // reads as "the document has no place of birth" instead of as an error. Recovery works
+        // from the raw bytes for that reason.
+        let recovered = MrtdTextDecoder.recover(
+            dg11: passport.getDataGroup(.DG11)?.data,
+            dg12: passport.getDataGroup(.DG12)?.data)
+
+        func text(_ tag: Int, _ fallback: String?) -> String {
+            return recovered.fields[tag] ?? (fallback ?? "")
+        }
+
+        let placeOfBirth = text(MrtdTextDecoder.tagPlaceOfBirth, passport.placeOfBirth)
+        let permanentAddress = text(MrtdTextDecoder.tagPermanentAddress, passport.residenceAddress)
+
+        data["fullNameOfHolder"] = recovered.fields[MrtdTextDecoder.tagFullName]
+            ?? (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
         data["otherNames"] = [String]()
-        data["personalSummary"] = ""
-        data["placeOfBirth"] = passport.placeOfBirth ?? ""
-        data["permanentAddress"] = passport.residenceAddress ?? ""
-        data["telephone"] = passport.phoneNumber ?? ""
+        data["personalSummary"] = text(MrtdTextDecoder.tagPersonalSummary, "")
+        // Joined for display; the components are what application logic should read, because a
+        // single DG11 field can carry several unrelated attributes. See README.
+        data["placeOfBirth"] = MrtdTextDecoder.splitComponents(placeOfBirth).joined(separator: ", ")
+        data["permanentAddress"] =
+            MrtdTextDecoder.splitComponents(permanentAddress).joined(separator: ", ")
+        data["placeOfBirthLines"] = MrtdTextDecoder.splitComponents(placeOfBirth)
+        data["permanentAddressLines"] = MrtdTextDecoder.splitComponents(permanentAddress)
+        data["telephone"] = text(MrtdTextDecoder.tagTelephone, passport.phoneNumber)
+        data["textEncoding"] = recovered.encoding ?? NSNull()
 
         // DG12 - Additional Document Details
-        data["issuingAuthority"] = nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
+        data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
+            ?? nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
         data["dateOfIssue"] = ""
-        data["endorsementsAndObservations"] = ""
+        data["endorsementsAndObservations"] = text(MrtdTextDecoder.tagEndorsements, "")
+
+        // Raw data groups, base64, only on request: a second full copy of every field and the
+        // portrait, but what a backend needs to re-verify the issuer's signature itself.
+        if includeRawDataGroups {
+            var raw: [String: String] = [:]
+            for (dgId, group) in passport.dataGroupsRead {
+                let number = dataGroupIdToNumber(dgId)
+                // EF.COM and anything unrecognised map to a number that is not a data group;
+                // keying on it would put a "-1" entry in the payload.
+                guard dgId == .SOD || number >= 1 else { continue }
+                let key = dgId == .SOD ? "sod" : String(number)
+                raw[key] = Data(group.data).base64EncodedString()
+            }
+            data["rawDataGroups"] = raw
+        }
 
         // Metadata
         var dataGroupsRead: [Int] = []
