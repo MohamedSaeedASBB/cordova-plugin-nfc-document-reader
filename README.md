@@ -139,7 +139,6 @@ object `scanMRZ` returned.
 | `faceMatch.modelAsset` | `"mobilefacenet.tflite"` | Embedding model in app assets. `null` disables matching. |
 | `faceMatch.inputSize` | `112` | Model input edge |
 | `faceMatch.embeddingSize` | `192` | Model output vector length |
-| `faceMatch.threshold` | `0.9` | Built in — see [Threshold](#threshold). `null` returns the score without a pass/fail. |
 
 Safe to call directly from the `scanMRZ` callback.
 
@@ -219,12 +218,12 @@ flat fields, and plain-language issues.
   "documentTampered": false,
   "chipUnlocked": true,
   "holderPresent": "yes",               // "yes" | "no" | "notChecked"
-  "faceMatch": "matched",               // "matched" | "notMatched" | "review" | "notAvailable"
-  "faceMatchScore": 0.94,
-  "faceMatchThreshold": 0.9,
+  "faceMatch": "review",                // "review" (a score was produced) | "notAvailable"
+  "faceMatchScore": 0.7474,             // the backend applies its threshold to this
   "issues": [],
   "blockingIssueCount": 0,
-  "summary": "Document is genuine and issued by a trusted authority. A live person was present. Their face matches the chip photo."
+  "warningCount": 0,
+  "summary": "Document is genuine and issued by a trusted authority. A live person was present. Face match score returned for a decision. Decide in the backend or send to manual review."
 }
 ```
 
@@ -233,6 +232,7 @@ Branch on `outcome` alone if you want one decision:
 | `outcome` | Meaning | Suggested handling |
 |---|---|---|
 | `pass` | every check that ran succeeded | proceed |
+| `review` | includes every successful face match, since the device never decides one | apply your threshold to `faceMatchScore` |
 | `review` | nothing was contradicted, but something could not be established | queue for an officer |
 | `fail` | a check was contradicted | stop; `summary` says why |
 
@@ -354,7 +354,7 @@ against the physical document per issuing country before storing it in named fie
 ### Raw data groups
 
 Pass `includeRawDataGroups: true` to `readNFC` to get each data group exactly as read from the
-chip:
+chip (both platforms):
 
 ```json
 "rawDataGroups": { "1": "<base64>", "2": "<base64>", "11": "<base64>",
@@ -392,9 +392,11 @@ on the core Arabic letters and differ elsewhere, so recovered names should be ch
 physical document before being trusted as a customer record. The encoding is chosen once per
 document from all its damaged fields together, so fields cannot disagree with each other.
 
-This applies to Android. On iOS the library returns nil for a field it cannot decode as UTF-8, so
-the same document yields empty fields rather than boxes — the equivalent recovery is not yet
-implemented there.
+Both platforms do this, but the failure they recover from looks different and is easy to misread.
+Android's decoder substitutes `U+FFFD` per unreadable byte, so damage shows as boxes. iOS returns
+nil for the whole field, so the same document arrives with **empty fields** — which reads as "this
+document has no place of birth" rather than as an error. Detection therefore works from the raw
+bytes on both, not from the decoded string.
 
 ### Images in the payload
 
@@ -450,26 +452,25 @@ the two `<!-- CSCA trust store -->` blocks in `plugin.xml`, and reinstall.
 Without it: `passiveAuthentication.status = "notVerified"`, `reasons = ["NO_TRUST_ANCHORS"]`. See
 [`src/csca/README.md`](src/csca/README.md).
 
-### Threshold — applied in the backend, not on the device
+### Threshold — there isn't one
 
-**No threshold is applied on the device.** The plugin computes the cosine similarity and returns
-it; the backend holds the threshold and makes the decision. So the normal result is:
+**The plugin has no threshold and no option to set one.** It computes the cosine similarity and
+returns it; the backend decides what the number means:
 
 ```json
-"match": { "status": "review", "similarity": 0.6421, "threshold": null,
-           "reason": "NO_THRESHOLD_CONFIGURED", "onDevice": true }
+"match": { "status": "review", "similarity": 0.7474, "reason": null, "onDevice": true }
 ```
 
-and `verification.outcome` is `review` with `faceMatchScore` populated — the score is real, the
-decision is yours to make server-side.
+`verification.outcome` is `review` with `faceMatchScore` populated. `"review"` is the only
+successful match status — the device measures, it never decides.
 
-This is the right split. A decision boundary on the handset cannot be changed without an app
-release, cannot be audited centrally, and sits on a device an attacker controls. In the backend it
-can be tuned, versioned and recalibrated as `tools/face-match-calibration` produces better FAR/FRR
-numbers.
+A decision boundary on the handset cannot be changed without an app release, cannot be audited
+centrally, and sits on a device an attacker controls. In the backend it can be tuned, versioned and
+recalibrated as `tools/face-match-calibration` produces better FAR/FRR numbers — and one value
+governs every channel rather than every installed build.
 
-`faceMatch: { threshold: 0.6 }` still works and makes the device decide, which is useful for
-testing. Do not use it in production unless you intend to ship the decision boundary to handsets.
+A genuine read observed in testing scored **0.7474**, which is a useful reminder that thresholds
+copied from public benchmarks do not transfer to chip-portrait-versus-selfie pairs.
 
 ## Tools
 

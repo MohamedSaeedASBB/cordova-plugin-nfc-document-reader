@@ -23,6 +23,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var pendingLivenessOptions: LivenessOptions?
     private var pendingFaceMatchConfig: [String: Any]?
     private var pendingPassiveAuthConfig: [String: Any]?
+    private var pendingIncludeRawDataGroups = false
     private let comparisonQueue = DispatchQueue(label: "liveness.comparison.queue")
 
     // MARK: - Plugin Lifecycle
@@ -187,6 +188,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         pendingLivenessOptions = nil
         pendingFaceMatchConfig = nil
         pendingPassiveAuthConfig = nil
+        pendingIncludeRawDataGroups = false
         if command.arguments.count > 1, let readOptions = command.arguments[1] as? [String: Any] {
             if let enabled = readOptions["liveness"] as? Bool, enabled {
                 pendingLivenessOptions = LivenessOptions.from([:])
@@ -195,6 +197,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             }
             pendingFaceMatchConfig = readOptions["faceMatch"] as? [String: Any]
             pendingPassiveAuthConfig = readOptions["passiveAuth"] as? [String: Any]
+            pendingIncludeRawDataGroups = (readOptions["includeRawDataGroups"] as? Bool) ?? false
         }
 
         nfcCallbackId = command.callbackId
@@ -217,6 +220,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
            passiveAuth.index(forKey: "trustStoreAsset") != nil {
             reader.trustStoreResource = passiveAuth["trustStoreAsset"] as? String
         }
+        reader.includeRawDataGroups = pendingIncludeRawDataGroups
         self.documentReader = reader
 
         reader.readDocument(
