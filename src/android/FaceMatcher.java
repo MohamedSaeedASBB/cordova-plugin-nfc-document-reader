@@ -27,9 +27,9 @@ import java.nio.channels.FileChannel;
  * compared by cosine similarity against a decision threshold.
  *
  * The model is NOT bundled with this plugin. The bank supplies it, because the choice of model
- * and threshold is a biometric-governance decision: the threshold fixes the false-accept and
- * false-reject rates of an identity check, and those rates have to be measured on a
- * representative population and signed off, not inherited from a plugin default.
+ * is a biometric-governance decision, as is the threshold the backend applies to the scores it
+ * produces: that threshold fixes the false-accept and false-reject rates of an identity check,
+ * and those rates have to be measured on a representative population and signed off.
  *
  * The defaults here target a MobileFaceNet-family model: 112x112 input, 192-dimension embedding,
  * (x - 127.5) / 128 preprocessing. A different model family needs matching inputSize,
@@ -37,20 +37,20 @@ import java.nio.channels.FileChannel;
  * PIXEL_ constants below.
  *
  * Wiring a model in:
- *   1. Place the .tflite file in the app's assets (e.g. www/assets or platform assets).
- *   2. Pass {@code faceMatch: { modelAsset, inputSize, embeddingSize, threshold }} to readNFC.
- *   3. Derive the threshold before enabling it in production: run the pair through this matcher
- *      over a labelled set of genuine and impostor pairs representative of the customer
- *      population and the capture conditions (chip portraits are often low-resolution and years
- *      old), sweep the cosine-similarity threshold, and pick the operating point that meets the
- *      bank's false-accept target. Record the resulting FAR/FRR — those numbers, not the
- *      threshold alone, are what a reviewer needs.
+ *   1. Place the .tflite file in the app's assets (tools/install-face-model.sh does this).
+ *   2. Optionally pass {@code faceMatch: { modelAsset, inputSize, embeddingSize }} to readNFC.
+ *   3. Derive the backend's threshold before deciding on scores in production: run pairs through
+ *      tools/face-match-calibration over a labelled set representative of the customer population
+ *      and the capture conditions (chip portraits are often low-resolution and years old), sweep
+ *      the cosine-similarity threshold, and pick the operating point that meets the bank's
+ *      false-accept target. Record the resulting FAR/FRR — those numbers, not the threshold
+ *      alone, are what a reviewer needs.
  *
- * No threshold is applied on the device. The matcher returns the similarity and the backend
- * decides: the decision boundary belongs where it can be changed, audited and calibrated without
- * shipping an app release, and where a handset cannot be persuaded to lower it.
- * tools/face-match-calibration produces the FAR/FRR that justifies whatever value the backend
- * holds.
+ * This class has no threshold and no way to accept one. It measures the similarity between two
+ * faces and reports it; the backend decides what the number means. The decision boundary belongs
+ * where it can be changed, audited and calibrated without shipping an app release, and where a
+ * handset cannot be persuaded to lower it. tools/face-match-calibration produces the FAR/FRR that
+ * justifies whatever value the backend holds.
  *
  * Until a model is installed, the match is reported as deferred ("MODEL_NOT_INSTALLED")
  * rather than silently passing — an un-provisioned matcher is not a failed one. A model the
@@ -82,26 +82,15 @@ public class FaceMatcher {
         public int inputSize = 112;
         /** Embedding length the model emits (192 for MobileFaceNet, 128/512 for FaceNet). */
         public int embeddingSize = 192;
-        /**
-         * Cosine-similarity threshold at or above which the pair is reported as a match.
-         *
-         * Null by design: the decision lives in the backend, which holds the threshold and
-         * applies it to the returned similarity. The device computes the score and reports
-         * status "review" — it does not decide identity. A threshold passed here is honoured,
-         * which is useful for testing, but it puts a copy of the decision boundary on the
-         * handset where it cannot be changed without a release.
-         */
-        public Double threshold = null;
         /** Crop padding applied around the detected face before embedding. */
         public float cropPadding = 0.25f;
     }
 
     public static class MatchResult {
-        /** "matched", "notMatched", "review", "deferred" or "error". */
+        /** "review" when a score was produced, otherwise "deferred" or "error". */
         public String status;
         /** Cosine similarity in [-1, 1], or null when no comparison ran. */
         public Double similarity;
-        public Double threshold;
         public String reason;
     }
 
@@ -113,10 +102,7 @@ public class FaceMatcher {
         this.config = config;
     }
 
-    /**
-     * A model is enough to run the comparison. The threshold is separate: without it we still
-     * compute and report the similarity, but refuse to turn it into a pass/fail.
-     */
+    /** A model is all that is needed: the comparison produces a score, never a verdict. */
     public boolean isConfigured() {
         return config != null
                 && config.modelAsset != null
@@ -185,21 +171,12 @@ public class FaceMatcher {
 
             double similarity = cosineSimilarity(documentEmbedding, livenessEmbedding);
             result.similarity = round(similarity);
-            result.threshold = config.threshold;
-
-            if (config.threshold == null) {
-                // The comparison ran on-device and the score is real, but turning a score into a
-                // pass/fail needs a threshold measured on this bank's population. Reporting
-                // "review" keeps the decision with a human instead of inventing a boundary.
-                result.status = "review";
-                result.reason = "NO_THRESHOLD_CONFIGURED";
-            } else {
-                result.status = similarity >= config.threshold ? "matched" : "notMatched";
-            }
+            // The device measures; it does not decide. There is no threshold here to compare
+            // against, so the score is returned as-is for the backend to judge.
+            result.status = "review";
 
             // Score only — never log the embeddings or the images themselves.
-            Log.d(TAG, "On-device face match: similarity=" + result.similarity
-                    + " threshold=" + config.threshold + " status=" + result.status);
+            Log.d(TAG, "On-device face match: similarity=" + result.similarity);
             return result;
         } catch (EmbeddingLengthException e) {
             // Almost always a config error rather than a broken model: the .tflite emits a

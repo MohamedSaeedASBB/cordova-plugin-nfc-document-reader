@@ -302,8 +302,6 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         matchJson.put("status", match.status);
                         matchJson.put("similarity", match.similarity != null
                                 ? match.similarity : JSONObject.NULL);
-                        matchJson.put("threshold", match.threshold != null
-                                ? match.threshold : JSONObject.NULL);
                         matchJson.put("reason", match.reason != null ? match.reason : JSONObject.NULL);
                         matchJson.put("onDevice", true);
                         outcome.json.put("match", matchJson);
@@ -361,16 +359,6 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         }
         config.inputSize = json.optInt("inputSize", config.inputSize);
         config.embeddingSize = json.optInt("embeddingSize", config.embeddingSize);
-        if (json.has("threshold")) {
-            // An explicit null clears the built-in threshold and returns the score for review
-            // instead of a pass/fail. Absent means keep the built-in value.
-            config.threshold = json.isNull("threshold")
-                    ? null
-                    : json.optDouble("threshold", Double.NaN);
-            if (config.threshold != null && config.threshold.isNaN()) {
-                config.threshold = null;      // unparseable value: decide in the backend
-            }
-        }
         return config;
     }
 

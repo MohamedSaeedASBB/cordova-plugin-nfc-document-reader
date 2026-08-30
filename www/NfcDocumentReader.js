@@ -49,7 +49,7 @@ var ISSUE_TEXT = {
     EMBEDDING_LENGTH_MISMATCH:   ["warning",  "The face matching model is misconfigured."],
     MISSING_PORTRAIT:            ["warning",  "A face could not be found in the chip photo or the selfie."],
     MATCHER_FAILED:              ["warning",  "The face comparison could not be completed."],
-    NO_THRESHOLD_CONFIGURED:     ["info",     "Face match score returned for the backend to decide on."],
+    FACE_SCORE_RETURNED:         ["info",     "Face match score returned for the backend to decide on."],
     // Raised by summarise itself rather than by the native layer, so that every failure carries a
     // reason a person can act on.
     LIVENESS_FAILED:             ["blocking", "The liveness check did not pass — no live person was confirmed in front of the camera."],
@@ -117,24 +117,24 @@ function summarise(result) {
     // ---- Face match ----
     var faceMatch = "notAvailable";
     var faceMatchScore = null;
-    var faceMatchThreshold = null;
     if (match) {
         checksPerformed.push("faceMatch");
         faceMatchScore = (typeof match.similarity === "number") ? match.similarity : null;
-        faceMatchThreshold = (typeof match.threshold === "number") ? match.threshold : null;
+        // The device no longer decides: a completed comparison reports "review" and the score.
+        // "matched"/"notMatched" are still handled so payloads stored by older builds still read.
         if (match.status === "matched") faceMatch = "matched";
         else if (match.status === "notMatched") faceMatch = "notMatched";
         else if (match.status === "review") faceMatch = "review";
         if (match.reason) issues.push(describeIssue(match.reason));
+        if (faceMatch === "review" && faceMatchScore !== null) {
+            issues.push(describeIssue("FACE_SCORE_RETURNED"));
+        }
         if (faceMatch === "notMatched") {
-            // Quotes the reported score and threshold as they are; no derived figures.
             issues.push({
                 code: "FACE_NOT_MATCHED",
                 severity: "blocking",
                 message: "The selfie did not match the chip photo closely enough"
-                    + (faceMatchScore !== null ? " (score " + faceMatchScore : " (score unavailable")
-                    + (faceMatchThreshold !== null ? ", required " + faceMatchThreshold : "")
-                    + ")."
+                    + (faceMatchScore !== null ? " (score " + faceMatchScore + ")." : ".")
             });
         }
     }
@@ -180,7 +180,6 @@ function summarise(result) {
         holderPresent: holderPresent,           // "yes" | "no" | "notChecked"
         faceMatch: faceMatch,                   // "matched" | "notMatched" | "review" | "notAvailable"
         faceMatchScore: faceMatchScore,
-        faceMatchThreshold: faceMatchThreshold,
         issues: issues,
         blockingIssueCount: blocking.length,
         warningCount: warnings.length,
@@ -298,7 +297,7 @@ var NfcDocumentReader = {
      *   {
      *     verification: { outcome, requiresManualReview, checksPerformed, documentAuthentic,
      *                     documentTampered, chipUnlocked, holderPresent, faceMatch,
-     *                     faceMatchScore, faceMatchThreshold, issues, blockingIssueCount,
+     *                     faceMatchScore, issues, blockingIssueCount, warningCount,
      *                     summary },
      *     documentType, issuingState, primaryIdentifier, secondaryIdentifier,
      *     documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
@@ -386,7 +385,7 @@ var NfcDocumentReader = {
      *     livenessFaceImageBase64, livenessFaceImageBytes,
      *     livenessFaceImageWidth, livenessFaceImageHeight,
      *
-     *     match: { status, similarity, threshold, reason, onDevice }
+     *     match: { status, similarity, reason, onDevice }   // no threshold: the backend decides
      *   }
      *
      * The match runs entirely on-device. `options.faceMatch` is optional: the model asset
@@ -394,9 +393,9 @@ var NfcDocumentReader = {
      * iOS bundle once the file is placed in src/models/ (see src/models/README.md).
      *
      * `match.status`:
-     *   "matched" / "notMatched" - a threshold is configured and the score was compared to it
-     *   "review"                 - the normal result: the comparison ran, `similarity` is real,
-     *                              and no threshold was applied, so the backend decides
+     *   "review"                 - the comparison ran and `similarity` is a real score. This is
+     *                              the only successful status: the device measures, the backend
+     *                              decides. There is no threshold in the plugin to configure.
      *   "deferred"               - no comparison ran and nothing is broken. `reason` says which:
      *                              MODEL_NOT_INSTALLED  - no model at the default asset path, so
      *                                                     on-device matching is not provisioned
@@ -411,12 +410,10 @@ var NfcDocumentReader = {
      *                              MATCHER_FAILED            - anything else; check logcat/Console
      *                                                          for tag "FaceMatcher"
      *
-     * No threshold is applied on the device: the plugin returns the similarity and the backend
-     * decides. The normal result is status "review" with a real `similarity` and a null
-     * `threshold`, and `verification.outcome` is "review" with `faceMatchScore` populated.
-     * A decision boundary on the handset cannot be changed without a release, cannot be audited
-     * centrally, and sits on a device an attacker controls. Passing faceMatch.threshold makes the
-     * device decide instead — useful for testing, not for production.
+     * The plugin has no threshold and no option to set one. It returns the similarity and the
+     * backend decides: `verification.outcome` is "review" with `faceMatchScore` populated. A
+     * decision boundary on the handset cannot be changed without an app release, cannot be
+     * audited centrally, and sits on a device an attacker controls.
      *
      * Everything needed by the back office is in this one object: the chip data groups, the chip
      * portrait (faceImageBase64), the liveness portrait (liveness.faceImageBase64), the aligned
@@ -437,9 +434,6 @@ var NfcDocumentReader = {
      * @param {string} [options.faceMatch.modelAsset="mobilefacenet.tflite"] - .tflite model in app assets
      * @param {number} [options.faceMatch.inputSize=112] - Model input edge (112 MobileFaceNet, 160 FaceNet)
      * @param {number} [options.faceMatch.embeddingSize=192] - Model output vector length
-     * @param {number} [options.faceMatch.threshold] - Cosine-similarity threshold in [-1, 1].
-     *                 Omitted by design: the backend holds the threshold and decides. Passing one
-     *                 makes the device decide, which is for testing rather than production.
      */
     readNFC: function(success, error, mrzData, options) {
         exec(function(data) {

@@ -10,9 +10,9 @@ import TensorFlowLite
 /// compared by cosine similarity against a decision threshold.
 ///
 /// The model is NOT bundled with this plugin. The bank supplies it, because the choice of model
-/// and threshold is a biometric-governance decision: the threshold fixes the false-accept and
-/// false-reject rates of an identity check, and those rates have to be measured on a
-/// representative population and signed off, not inherited from a plugin default.
+/// is a biometric-governance decision, as is the threshold the backend applies to the scores it
+/// produces: that threshold fixes the false-accept and false-reject rates of an identity check,
+/// and those rates have to be measured on a representative population and signed off.
 ///
 /// The defaults here target a MobileFaceNet-family model: 112x112 input, 192-dimension embedding,
 /// (x - 127.5) / 128 preprocessing. A different model family needs matching inputSize,
@@ -21,19 +21,17 @@ import TensorFlowLite
 ///
 /// Wiring a model in:
 ///   1. Add the .tflite file to the app bundle as a resource.
-///   2. Pass `faceMatch: { modelAsset, inputSize, embeddingSize, threshold }` to readNFC.
-///   3. Derive the threshold before enabling it in production: run the pair through this matcher
-///      over a labelled set of genuine and impostor pairs representative of the customer
-///      population and the capture conditions (chip portraits are often low-resolution and years
-///      old), sweep the cosine-similarity threshold, and pick the operating point that meets the
-///      bank's false-accept target. Record the resulting FAR/FRR — those numbers, not the
-///      threshold alone, are what a reviewer needs.
+///   2. Optionally pass `faceMatch: { modelAsset, inputSize, embeddingSize }` to readNFC.
+///   3. Derive the backend's threshold before deciding on scores in production, using
+///      tools/face-match-calibration over a labelled set representative of the customer
+///      population and the capture conditions. Record the resulting FAR/FRR — those numbers, not
+///      the threshold alone, are what a reviewer needs.
 ///
-/// No threshold is applied on the device. The matcher returns the similarity and the backend
-/// decides: the decision boundary belongs where it can be changed, audited and calibrated without
-/// shipping an app release, and where a handset cannot be persuaded to lower it.
-/// tools/face-match-calibration produces the FAR/FRR that justifies whatever value the backend
-/// holds.
+/// This type has no threshold and no way to accept one. It measures the similarity between two
+/// faces and reports it; the backend decides what the number means. The decision boundary belongs
+/// where it can be changed, audited and calibrated without shipping an app release, and where a
+/// handset cannot be persuaded to lower it. tools/face-match-calibration produces the FAR/FRR
+/// that justifies whatever value the backend holds.
 ///
 /// Until a model is installed, the match is reported as deferred ("MODEL_NOT_INSTALLED") rather
 /// than silently passing — an un-provisioned matcher is not a failed one. A model the caller asked
@@ -59,14 +57,6 @@ final class FaceMatcher {
         var inputSize: Int = 112
         /// Embedding length the model emits (192 for MobileFaceNet, 128/512 for FaceNet).
         var embeddingSize: Int = 192
-        /// Cosine-similarity threshold at or above which the pair is reported as a match.
-        ///
-        /// Nil by design: the decision lives in the backend, which holds the threshold and applies
-        /// it to the returned similarity. The device computes the score and reports status
-        /// "review" — it does not decide identity. A threshold passed here is honoured, which is
-        /// useful for testing, but it puts a copy of the decision boundary on the handset where it
-        /// cannot be changed without a release.
-        var threshold: Double?
         /// Crop padding applied around the detected face before embedding.
         var cropPadding: CGFloat = 0.25
 
@@ -81,28 +71,21 @@ final class FaceMatcher {
             }
             if let value = dict["inputSize"] as? Int { config.inputSize = value }
             if let value = dict["embeddingSize"] as? Int { config.embeddingSize = value }
-            if dict.index(forKey: "threshold") != nil {
-                // An explicit null clears the built-in threshold and returns the score for review
-                // instead of a pass/fail.
-                config.threshold = dict["threshold"] as? Double
-            }
             return config
         }
     }
 
     struct MatchResult {
-        /// "matched", "notMatched", "review", "deferred" or "error".
+        /// "review" when a score was produced, otherwise "deferred" or "error".
         var status: String
         /// Cosine similarity in [-1, 1], or nil when no comparison ran.
         var similarity: Double?
-        var threshold: Double?
         var reason: String?
 
         var dictionary: [String: Any] {
             return [
                 "status": status,
                 "similarity": similarity ?? NSNull(),
-                "threshold": threshold ?? NSNull(),
                 "reason": reason ?? NSNull(),
                 "onDevice": true
             ]
@@ -115,8 +98,7 @@ final class FaceMatcher {
         self.config = config
     }
 
-    /// A model is enough to run the comparison. The threshold is separate: without it we still
-    /// compute and report the similarity, but refuse to turn it into a pass/fail.
+    /// A model is all that is needed: the comparison produces a score, never a verdict.
     var isConfigured: Bool {
         guard let asset = config.modelAsset, !asset.isEmpty else { return false }
         return true
@@ -127,11 +109,10 @@ final class FaceMatcher {
                livenessPortrait: UIImage?, livenessFaceBox: CGRect?) -> MatchResult {
         guard isConfigured else {
             return MatchResult(status: "deferred", similarity: nil,
-                               threshold: config.threshold, reason: "NO_MODEL_CONFIGURED")
+                               reason: "NO_MODEL_CONFIGURED")
         }
         guard let documentPortrait = documentPortrait, let livenessPortrait = livenessPortrait else {
-            return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
-                               reason: "MISSING_PORTRAIT")
+            return MatchResult(status: "error", similarity: nil, reason: "MISSING_PORTRAIT")
         }
         guard let modelPath = resolveModelPath() else {
             // Two different situations, and reporting both as "error" sends people debugging
@@ -151,12 +132,11 @@ final class FaceMatcher {
                       + " (%@); reporting the match as deferred. See src/models/README.md.",
                       config.modelAsset ?? "nil")
                 return MatchResult(status: "deferred", similarity: nil,
-                                   threshold: config.threshold, reason: "MODEL_NOT_INSTALLED")
+                                   reason: "MODEL_NOT_INSTALLED")
             }
             NSLog("[FaceMatcher] Configured face match model not found in the bundle: %@",
                   config.modelAsset ?? "nil")
-            return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
-                               reason: "MODEL_NOT_FOUND")
+            return MatchResult(status: "error", similarity: nil, reason: "MODEL_NOT_FOUND")
         }
 
         do {
@@ -176,29 +156,18 @@ final class FaceMatcher {
             // Score only — never log the embeddings or the images themselves.
             NSLog("[FaceMatcher] On-device face match: similarity=%.4f", rounded)
 
-            guard let threshold = config.threshold else {
-                // The comparison ran on-device and the score is real, but turning a score into a
-                // pass/fail needs a threshold measured on this bank's population. Reporting
-                // "review" keeps the decision with a human instead of inventing a boundary.
-                return MatchResult(status: "review", similarity: rounded,
-                                   threshold: nil, reason: "NO_THRESHOLD_CONFIGURED")
-            }
-
-            return MatchResult(status: similarity >= threshold ? "matched" : "notMatched",
-                               similarity: rounded,
-                               threshold: threshold,
-                               reason: nil)
+            // The device measures; it does not decide. There is no threshold here to compare
+            // against, so the score is returned as-is for the backend to judge.
+            return MatchResult(status: "review", similarity: rounded, reason: nil)
         } catch MatcherError.embeddingLengthMismatch(let lhs, let rhs) {
             // Almost always a config error rather than a broken model: the .tflite emits a
             // different vector length than embeddingSize claims.
             NSLog("[FaceMatcher] Model output does not match configuration: %d vs %d", lhs, rhs)
-            return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
-                               reason: "EMBEDDING_LENGTH_MISMATCH")
+            return MatchResult(status: "error", similarity: nil, reason: "EMBEDDING_LENGTH_MISMATCH")
         } catch {
             // A matcher failure is never reported as a pass.
             NSLog("[FaceMatcher] On-device face match failed: %@", String(describing: error))
-            return MatchResult(status: "error", similarity: nil, threshold: config.threshold,
-                              reason: "MATCHER_FAILED")
+            return MatchResult(status: "error", similarity: nil, reason: "MATCHER_FAILED")
         }
     }
 
