@@ -164,6 +164,86 @@ Options: `challenges[]`, `challengeCount` (2), `overallTimeoutMs` (45000), `perC
 
 Omit `challenges` so the sequence is random — a fixed order is replayable.
 
+### `captureDocument(success, error, [options])`  *(Android only)*
+
+Photographs the document itself. **An ID card is captured front and back; a passport is captured
+once, at the photo page** — the step list follows from `documentType`, so the caller does not
+describe the sides.
+
+```js
+window.NfcDocumentReader.captureDocument(function (result) {
+    // result.sides.front.imageBase64, result.sides.back.imageBase64
+}, function (error) {
+    console.log(error);            // also called when the user cancels
+}, { documentType: "id", ocr: true });
+```
+
+```json
+{
+  "captureType": "document",
+  "documentType": "id",
+  "images": [ { "key": "front", "label": "Front of the card", "imageBase64": "…",
+                "imageMimeType": "image/jpeg", "imageBytes": 214003,
+                "imageWidth": 1600, "imageHeight": 1010, "jpegQuality": 90, "ocr": { … } } ],
+  "sides": { "front": { … }, "back": { … } },
+  "capturedAt": 1756704000000
+}
+```
+
+Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
+a photo is too blurry to read while they can still retake it.
+
+| Option | Default | |
+|---|---|---|
+| `documentType` | `"id"` | `"id"` captures front and back, `"passport"` front only |
+| `ocr` | `false` | Also return recognised text per page |
+| `maxImageDimension` | `1600` | Long edge in pixels — larger than the liveness portrait, because this image must stay readable to a person |
+| `maxImageBytes` | `512000` | Quality steps down until it fits |
+| `jpegQuality` | `90` | Starting quality |
+| `title` | per type | Screen title |
+
+### `captureProofOfAddress(success, error, [options])`  *(Android only)*
+
+One page of whatever the customer brought — a utility bill, a bank statement, a tenancy contract.
+Same options minus `documentType`, and the single entry is keyed `"document"`.
+
+```js
+window.NfcDocumentReader.captureProofOfAddress(function (result) {
+    var page = result.sides.document;
+    // page.imageBase64, page.ocr.lines
+}, function (error) { console.log(error); }, { ocr: true });
+```
+
+The plugin does not judge whether a document *is* valid proof of address — it has no idea what
+counts in a given country. It returns the picture and, optionally, the text on it.
+
+### OCR and script coverage
+
+`ocr: true` returns **raw recognised lines, never named fields.** Deciding which line is the
+customer's address rather than the biller's is issuer-specific, and getting it wrong writes a
+stranger's address onto a customer record.
+
+**Coverage differs by platform, and this matters for Arabic documents:**
+
+| Platform | Engine | Scripts | Arabic |
+|---|---|---|---|
+| Android | ML Kit Text Recognition v2 | Latin only (separate models exist for Chinese, Devanagari, Japanese, Korean) | **No** |
+| iOS | Apple Vision | Many, version-dependent | **Yes**, on recent iOS |
+
+On a bilingual Algerian document, Android returns the Latin half and simply omits the Arabic. Since
+"no Arabic in the output" and "no Arabic on the page" look identical downstream, the result reports
+what ran:
+
+```json
+"ocr": { "text": "…", "lines": ["…"], "lineCount": 12,
+         "engine": "mlkit-text-recognition-v2", "scripts": ["Latin"],
+         "arabicSupported": false }
+```
+
+If you need the Arabic, OCR the returned image in the backend. Both engines run **entirely
+on-device** with no network call and no extra dependency — ML Kit's text model is already bundled
+for MRZ scanning, and Vision is a system framework.
+
 ### `cancelRead(success, error)`
 
 Cancels an in-flight read and dismisses the sheet.

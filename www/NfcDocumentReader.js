@@ -454,6 +454,73 @@ var NfcDocumentReader = {
     summarise: summarise,
 
     /**
+     * Photograph the document itself, one side at a time.
+     *
+     * An ID card is captured front and back; a passport is captured once, at the photo page. The
+     * step list follows from `documentType` — the caller does not describe the sides.
+     *
+     * Each shot is reviewed on screen before it is kept, because nothing downstream can tell the
+     * operator that a photo is too blurry to read while they can still retake it.
+     *
+     * Result:
+     *   {
+     *     captureType: "document",
+     *     documentType: "id" | "passport",
+     *     images: [ { key, label, imageBase64, imageMimeType, imageBytes,
+     *                 imageWidth, imageHeight, jpegQuality, ocr? } ],
+     *     sides: { front: {...}, back: {...} },   // the same entries, keyed
+     *     capturedAt
+     *   }
+     *
+     * `ocr` is present only when `options.ocr` is true — see the note on script coverage below.
+     *
+     * @param {Function} success - Called with the capture result
+     * @param {Function} error - Called with a user-facing message, including on cancellation
+     * @param {Object} [options]
+     * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
+     * @param {boolean} [options.ocr=false] - Also return recognised text for each page
+     * @param {string} [options.title] - Override the screen title
+     * @param {number} [options.maxImageDimension=1600] - Long edge in pixels. Larger than the
+     *                 liveness portrait on purpose: this image has to stay readable to a person.
+     * @param {number} [options.maxImageBytes=512000] - JPEG quality steps down until it fits
+     * @param {number} [options.jpegQuality=90] - Starting quality, 1-100
+     */
+    captureDocument: function(success, error, options) {
+        exec(success, error, SERVICE_NAME, 'captureDocument', [options || {}]);
+    },
+
+    /**
+     * Photograph a proof of address — a utility bill, a bank statement, a tenancy contract.
+     *
+     * One page, same review step, same options as captureDocument except that there is no
+     * document type: the plugin has no idea what a valid proof of address looks like in a given
+     * country, and does not pretend to. It returns the picture and, optionally, the text on it.
+     *
+     * Result: as captureDocument, with `captureType: "proofOfAddress"` and a single entry keyed
+     * "document".
+     *
+     * ON OCR AND SCRIPT COVERAGE
+     * `options.ocr` returns raw recognised lines, never named fields: deciding which line is the
+     * customer's address rather than the biller's is issuer-specific and not something this plugin
+     * can do safely.
+     *
+     * Coverage differs by platform, and the result says which engine ran and what it covers:
+     *   Android - ML Kit Text Recognition v2. Latin script only; there is no Arabic model, so on a
+     *             bilingual document the Arabic is simply absent from the output.
+     *   iOS     - Apple Vision, which does recognise Arabic on recent iOS versions.
+     * "No Arabic in the output" and "no Arabic on the page" look identical downstream, which is
+     * why `ocr.arabicSupported` is reported rather than left to be inferred. A backend that needs
+     * the Arabic can OCR the returned image itself.
+     *
+     * @param {Function} success - Called with the capture result
+     * @param {Function} error - Called with a user-facing message, including on cancellation
+     * @param {Object} [options] - As captureDocument, minus documentType
+     */
+    captureProofOfAddress: function(success, error, options) {
+        exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
+    },
+
+    /**
      * Cancel an ongoing NFC reading operation.
      * @param {Function} success - Called on successful cancellation
      * @param {Function} error - Called with error message string

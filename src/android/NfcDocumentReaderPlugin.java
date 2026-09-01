@@ -38,11 +38,13 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private static final String TAG = "NfcDocReaderPlugin";
     private static final int REQUEST_MRZ_SCAN = 9001;
     private static final int REQUEST_LIVENESS = 9002;
+    private static final int REQUEST_DOCUMENT_CAPTURE = 9003;
 
     private NfcAdapter nfcAdapter;
     private CallbackContext nfcCallbackContext;
     private CallbackContext mrzScanCallbackContext;
     private CallbackContext livenessCallbackContext;
+    private CallbackContext captureCallbackContext;
     private NfcDocumentReader documentReader;
 
     // MRZ data for BAC authentication
@@ -143,6 +145,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             case "checkLiveness":
                 checkLiveness(args, callbackContext);
                 return true;
+            case "captureDocument":
+                captureDocument(args, callbackContext);
+                return true;
+            case "captureProofOfAddress":
+                captureProofOfAddress(args, callbackContext);
+                return true;
             case "readNFC":
                 readNFC(args, callbackContext);
                 return true;
@@ -188,6 +196,80 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
+    // ==================== captureDocument / captureProofOfAddress ====================
+
+    /**
+     * Photographs the document itself. An ID card has two sides worth capturing and a passport
+     * has one, so the step list is decided here rather than by the app or the camera screen.
+     */
+    private void captureDocument(JSONArray args, CallbackContext callbackContext) {
+        JSONObject options = args.optJSONObject(0);
+        if (options == null) options = new JSONObject();
+
+        String documentType = options.optString("documentType", "id");
+        try {
+            options.put("captureType", "document");
+            options.put("documentType", documentType);
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            if (!options.has("title")) {
+                options.put("title", "passport".equalsIgnoreCase(documentType)
+                        ? "Capture passport" : "Capture ID card");
+            }
+        } catch (JSONException e) {
+            callbackContext.error("Invalid capture options: " + e.getMessage());
+            return;
+        }
+        launchCapture(options, callbackContext);
+    }
+
+    /** A single page of whatever the customer brought — a bill, a statement, a tenancy contract. */
+    private void captureProofOfAddress(JSONArray args, CallbackContext callbackContext) {
+        JSONObject options = args.optJSONObject(0);
+        if (options == null) options = new JSONObject();
+
+        try {
+            options.put("captureType", "proofOfAddress");
+            if (!options.has("title")) options.put("title", "Proof of address");
+            if (!options.has("steps")) {
+                JSONArray steps = new JSONArray();
+                JSONObject step = new JSONObject();
+                step.put("key", "document");
+                step.put("label", "Proof of address");
+                step.put("hint", "Photograph the whole page, including the name and address");
+                steps.put(step);
+                options.put("steps", steps);
+            }
+        } catch (JSONException e) {
+            callbackContext.error("Invalid capture options: " + e.getMessage());
+            return;
+        }
+        launchCapture(options, callbackContext);
+    }
+
+    private void launchCapture(JSONObject options, CallbackContext callbackContext) {
+        captureCallbackContext = callbackContext;
+        DocumentCaptureActivity.clearResult();
+
+        Intent intent = new Intent(cordova.getActivity(), DocumentCaptureActivity.class);
+        intent.putExtra(DocumentCaptureActivity.EXTRA_OPTIONS, options.toString());
+        cordova.startActivityForResult(this, intent, REQUEST_DOCUMENT_CAPTURE);
+    }
+
+    private void onDocumentCaptureResult(int resultCode, Intent intent) {
+        // Same reason as the liveness result: the payload carries base64 JPEGs, which are far too
+        // large for Intent extras, so the activity hands it over in memory.
+        JSONObject result = DocumentCaptureActivity.consumeResult();
+        CallbackContext callback = captureCallbackContext;
+        captureCallbackContext = null;
+        if (callback == null) return;
+
+        if (resultCode == Activity.RESULT_OK && result != null) {
+            callback.success(result);
+        } else {
+            callback.error("Document capture was cancelled.");
+        }
+    }
+
     // ==================== checkLiveness ====================
 
     private void checkLiveness(JSONArray args, CallbackContext callbackContext) {
@@ -215,6 +297,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             onLivenessResult(resultCode, intent);
         } else if (requestCode == REQUEST_MRZ_SCAN) {
             onMrzScanResult(resultCode, intent);
+        } else if (requestCode == REQUEST_DOCUMENT_CAPTURE) {
+            onDocumentCaptureResult(resultCode, intent);
         }
     }
 
