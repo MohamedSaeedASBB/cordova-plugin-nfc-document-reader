@@ -78,6 +78,7 @@
         <source-file src="src/android/MrtdTextDecoder.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DocumentCaptureActivity.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DocumentCaptureOptions.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/MrzChipComparison.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />

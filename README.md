@@ -212,35 +212,54 @@ picture. An `ocr: true` passed here is ignored.
 | `jpegQuality` | `80` | Starting quality |
 | `title` | per type | Screen title |
 
-### `captureAndReadNFC(success, error, mrzData, [options])`  *(Android only)*
+### `captureAndReadNFC(success, error, [options])`  *(Android only)*
 
-Photographs the card **and** reads its chip on one callback. Photographs first — the customer is
-already holding the card, and tapping it to the phone is the natural next move.
+The whole document check in one call, in this order:
+
+1. **Scan the MRZ** — it derives the chip access key, so it has to come first
+2. **Read the chip** — with progress events, liveness and face match, exactly as `readNFC`
+3. **Compare** what is printed against what the chip holds
+4. **Photograph the card** — front and back for an ID, photo page for a passport
+
+The photographs come last on purpose: the card is only photographed once there is reason to
+believe it is genuine, and the customer is still holding it either way. **There is no `mrzData`
+argument** — this function performs the scan itself.
 
 ```js
 window.NfcDocumentReader.captureAndReadNFC(function (data) {
-    if (data.event) { return show(data.state); }      // same progress events as readNFC
-    // data.capture.sides.front.imageBase64  — the photographs
-    // data.authentication, data.faceComparison, data.verification — the chip read
+    if (data.event) { return show(data.state); }
+    // data.mrzComparison.status        — "matched" | "mismatch" | "notCompared"
+    // data.capture.sides.front.imageBase64
+    // data.authentication, data.faceComparison, data.verification
 }, function (error) {
     show(error);
-}, mrz, { documentType: "id", liveness: true });
+}, { documentType: "id", liveness: true });
 ```
 
-The result is the `readNFC` payload with one field added:
+The result is the `readNFC` payload plus:
 
 ```json
+"mrzComparison": { "status": "matched", "fieldsCompared": ["documentNumber", "…"],
+                   "mismatches": [], "note": "…" },
 "capture": { "captureType": "document", "documentType": "id",
              "sides": { "front": { … }, "back": { … } },
              "order": ["front", "back"], "capturedAt": 1756704000000 }
 ```
 
-Options are `readNFC`'s, plus `documentType` and the `captureDocument` image options. No OCR — the
-chip carries these fields signed, so the photographs are for the record, not for reading.
+**What the comparison is worth.** `documentNumber`, `dateOfBirth` and `dateOfExpiry` derive the
+chip access key, so a chip that opened at all already agreed with them — they are reported as
+evidence, not as a test. The fields that can genuinely disagree are the names, nationality,
+issuing state and document code. A disagreement there is what an altered card or a transplanted
+chip looks like — **and also what a smudged character on worn print looks like to OCR**, so treat
+`mismatch` as a finding for a human rather than as proof of fraud.
 
-> **If the chip read fails, the photographs are discarded with it.** The error callback carries a
-> message, not a payload. A flow that must survive a failed chip read should call `captureDocument`
-> and `readNFC` separately and combine the two itself.
+`mrzComparison` is added to any `readNFC` result whose `mrzData` included `rawMrzLines`, not only
+to this flow.
+
+> **If the photographs are abandoned**, the chip result is still delivered with `capture` absent
+> and `captureCancelled: true`. A completed read cost the customer a tap and possibly a liveness
+> check; discarding it over a cancelled camera screen would be worse than returning it incomplete.
+> A failed chip read, by contrast, ends on the error callback.
 
 ### `captureProofOfAddress(success, error, [options])`  *(Android only)*
 
