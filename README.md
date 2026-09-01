@@ -101,6 +101,100 @@ Three things that bite:
    user needs to see it. And do not put a short timeout around these: an MRZ scan, a tap, a liveness
    check and two photographs together run well past a minute.
 
+#### A node per function
+
+`scanMRZ` — keep `rawMrzLines`: passing them back into `readNFC`'s `mrzData` is what enables the
+printed-versus-chip `mrzComparison`. Drop them and that check silently never runs.
+
+```js
+window.NfcDocumentReader.scanMRZ(function (mrz) {
+    $parameters.DocumentNumber = mrz.documentNumber;
+    $parameters.DateOfBirth    = mrz.dateOfBirth;      // YYMMDD
+    $parameters.DateOfExpiry   = mrz.dateOfExpiry;
+    $parameters.RawMrzLines    = JSON.stringify(mrz.rawMrzLines || []);
+    $parameters.Success        = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false; $parameters.ErrorMessage = error; $resolve();
+}, { documentType: "id" });
+```
+
+`captureDocument` — guard `sides.back`, which a passport does not have.
+
+```js
+window.NfcDocumentReader.captureDocument(function (result) {
+    var front = (result.sides && result.sides.front) || {};
+    var back  = (result.sides && result.sides.back)  || {};
+    $parameters.FrontImageBase64 = front.imageBase64 || "";
+    $parameters.BackImageBase64  = back.imageBase64  || "";
+    $parameters.Success = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.Cancelled = String(error).indexOf("cancelled") >= 0;
+    $resolve();
+}, { documentType: "id" });
+```
+
+`captureProofOfAddress` — branch on `arabicSupported` to decide whether the backend must re-OCR.
+
+```js
+window.NfcDocumentReader.captureProofOfAddress(function (result) {
+    var page = (result.sides && result.sides.document) || {};
+    $parameters.ImageBase64     = page.imageBase64 || "";
+    $parameters.OcrText         = page.ocr ? (page.ocr.text || "") : "";
+    $parameters.ArabicSupported = page.ocr ? !!page.ocr.arabicSupported : false;
+    $parameters.Success = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.Cancelled = String(error).indexOf("cancelled") >= 0;
+    $resolve();
+});
+```
+
+`captureAndReadNFC` — the long one. Four screens, well over a minute, success fired many times.
+
+```js
+var settled = false;                       // resolve exactly once
+function finish() { if (!settled) { settled = true; $resolve(); } }
+
+window.NfcDocumentReader.captureAndReadNFC(function (data) {
+    if (data.event) {                      // progress: waitingForTag, readerArmed, connecting,
+        $actions.OnNfcProgress(data.state);// authenticating, readingDataGroup, livenessCheck
+        return;                            // NOT the end — do not resolve
+    }
+
+    var v = data.verification || {};
+    var pa = (data.authentication || {}).passiveAuthentication || {};
+    var cap = data.capture || {};
+
+    $parameters.Outcome          = v.outcome || "";           // pass | review | fail
+    $parameters.Summary          = v.summary || "";
+    $parameters.FaceMatchScore   = v.faceMatchScore;          // the backend applies the threshold
+    $parameters.DocumentAuthentic = pa.status || "";          // passed | failed | notVerified
+    $parameters.MrzStatus        = (data.mrzComparison || {}).status || "";
+    $parameters.CaptureCancelled = !!data.captureCancelled;
+    $parameters.FrontImageBase64 = ((cap.sides || {}).front || {}).imageBase64 || "";
+    $parameters.BackImageBase64  = ((cap.sides || {}).back  || {}).imageBase64 || "";
+    $parameters.ChipPortrait     = data.faceImageBase64 || "";
+    $parameters.Success          = true;
+    finish();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.ErrorMessage = error;
+    finish();
+}, { documentType: "id", liveness: true });
+```
+
+Note that **abandoning the photographs is not an error here**: the chip result still arrives on the
+success callback, with `captureCancelled: true` and no `capture`. Only a failed chip read reaches
+the error callback.
+
+Extract the fields you need rather than `JSON.stringify`-ing the whole payload. A full result holds
+the chip portrait, the liveness portrait, the aligned face pair and two card photographs — well
+over a megabyte of base64 to carry in client memory.
+
 ## API
 
 All five functions take `success` and `error` callbacks. `error` always receives a
