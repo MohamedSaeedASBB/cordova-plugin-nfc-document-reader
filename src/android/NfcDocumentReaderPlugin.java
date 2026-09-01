@@ -45,6 +45,12 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private CallbackContext mrzScanCallbackContext;
     private CallbackContext livenessCallbackContext;
     private CallbackContext captureCallbackContext;
+    /** Non-null while a capture is phase one of captureAndReadNFC: [mrzData, options]. */
+    private JSONArray pendingCaptureThenReadArgs;
+    /** A finished capture handed to the next readNFC, which adopts it and clears this. */
+    private JSONObject captureAwaitingRead;
+    /** The capture belonging to the read currently running. */
+    private JSONObject pendingCaptureJson;
     private NfcDocumentReader documentReader;
 
     // MRZ data for BAC authentication
@@ -150,6 +156,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 return true;
             case "captureProofOfAddress":
                 captureProofOfAddress(args, callbackContext);
+                return true;
+            case "captureAndReadNFC":
+                captureAndReadNFC(args, callbackContext);
                 return true;
             case "readNFC":
                 readNFC(args, callbackContext);
@@ -258,6 +267,48 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         launchCapture(options, callbackContext);
     }
 
+    /**
+     * Photographs the card and then reads its chip, on one callback.
+     *
+     * Photographs first, deliberately: the customer is already holding the card, and tapping it
+     * to the phone is the natural next move rather than the other way round.
+     *
+     * Note what this does NOT do. If the chip read fails, the error callback fires with a message
+     * and the photographs are discarded with it — the error contract carries a string, not a
+     * payload. A flow that must keep the images through a failed read should call captureDocument
+     * and readNFC separately and combine them itself.
+     */
+    private void captureAndReadNFC(JSONArray args, CallbackContext callbackContext) {
+        JSONObject options = args.optJSONObject(1);
+        if (options == null) options = new JSONObject();
+
+        JSONObject captureOptions = new JSONObject();
+        try {
+            // Only the capture-side options travel to the camera; liveness, faceMatch and the rest
+            // belong to the chip read that follows.
+            String documentType = options.optString("documentType", "id");
+            captureOptions.put("documentType", documentType);
+            if (options.has("title")) captureOptions.put("title", options.optString("title"));
+            for (String key : new String[] { "maxImageDimension", "maxImageBytes", "jpegQuality" }) {
+                if (options.has(key)) captureOptions.put(key, options.opt(key));
+            }
+            captureOptions.put("captureType", "document");
+            captureOptions.put("ocr", false);           // the chip supplies these fields, signed
+            captureOptions.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            if (!captureOptions.has("title")) {
+                captureOptions.put("title", "passport".equalsIgnoreCase(documentType)
+                        ? "Capture passport" : "Capture ID card");
+            }
+        } catch (JSONException e) {
+            callbackContext.error("Invalid capture options: " + e.getMessage());
+            return;
+        }
+
+        pendingCaptureThenReadArgs = args;
+        captureAwaitingRead = null;
+        launchCapture(captureOptions, callbackContext);
+    }
+
     private void launchCapture(JSONObject options, CallbackContext callbackContext) {
         captureCallbackContext = callbackContext;
         DocumentCaptureActivity.clearResult();
@@ -273,13 +324,29 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         JSONObject result = DocumentCaptureActivity.consumeResult();
         CallbackContext callback = captureCallbackContext;
         captureCallbackContext = null;
+        JSONArray thenReadArgs = pendingCaptureThenReadArgs;
+        pendingCaptureThenReadArgs = null;
         if (callback == null) return;
 
-        if (resultCode == Activity.RESULT_OK && result != null) {
-            callback.success(result);
-        } else {
-            callback.error("Document capture was cancelled.");
+        boolean captured = resultCode == Activity.RESULT_OK && result != null;
+
+        if (thenReadArgs == null) {
+            if (captured) {
+                callback.success(result);
+            } else {
+                callback.error("Document capture was cancelled.");
+            }
+            return;
         }
+
+        // Phase one of captureAndReadNFC. Abandoning the photos abandons the whole flow: the chip
+        // read would otherwise start behind a screen the user just backed out of.
+        if (!captured) {
+            callback.error("Document capture was cancelled.");
+            return;
+        }
+        captureAwaitingRead = result;
+        readNFC(thenReadArgs, callback);
     }
 
     // ==================== checkLiveness ====================
@@ -506,6 +573,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         pendingFaceMatchConfig = null;
         pendingPassiveAuthConfig = null;
         pendingIncludeRawDataGroups = false;
+        // Adopt a capture only if one was just taken for this read. A plain readNFC clears it, so
+        // photographs from an abandoned combined flow cannot attach themselves to a later read.
+        pendingCaptureJson = captureAwaitingRead;
+        captureAwaitingRead = null;
 
         // Optional second argument: { liveness: {...}, faceMatch: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -761,6 +832,18 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         dismissNfcDialog();
 
                         JSONObject result = data.toJSON();
+
+                        // Fold in the photographs taken before the chip read, on both the plain
+                        // and the liveness paths — this result becomes pendingDocumentJson below.
+                        if (pendingCaptureJson != null) {
+                            try {
+                                result.put("capture", pendingCaptureJson);
+                            } catch (JSONException e) {
+                                Log.w(TAG, "Could not attach the capture to the chip result: "
+                                        + e.getMessage());
+                            }
+                            pendingCaptureJson = null;
+                        }
 
                         if (pendingLivenessOptionsJson != null) {
                             // Chip read done — now prove the holder is present and compare their

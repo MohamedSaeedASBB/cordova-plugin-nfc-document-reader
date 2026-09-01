@@ -182,6 +182,13 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         rejectUnimplementedCapture(command)
     }
 
+    /// The chip half works on iOS; the camera half does not, and half a combined call is not a
+    /// result. Callers who need the chip read alone on iOS should use readNFC.
+    @objc(captureAndReadNFC:)
+    func captureAndReadNFC(command: CDVInvokedUrlCommand) {
+        rejectUnimplementedCapture(command)
+    }
+
     private func rejectUnimplementedCapture(_ command: CDVInvokedUrlCommand) {
         let result = CDVPluginResult(
             status: .error,

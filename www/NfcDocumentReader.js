@@ -493,6 +493,40 @@ var NfcDocumentReader = {
     },
 
     /**
+     * Photograph the ID card and read its chip, on one callback.
+     *
+     * Photographs first — the customer is already holding the card, and tapping it to the phone is
+     * the natural next move. An ID card is photographed front and back, a passport at its photo
+     * page, exactly as captureDocument does; the chip read then runs exactly as readNFC does,
+     * including its progress events and its liveness and face-match options.
+     *
+     * The result is the readNFC payload with one field added:
+     *
+     *   capture: { captureType, documentType, images[], sides: { front, back }, capturedAt }
+     *
+     * No OCR: the chip carries these fields signed, so photographing them is for the record, not
+     * for reading.
+     *
+     * If the chip read fails, the error callback fires and the photographs are discarded with it —
+     * the error contract carries a message, not a payload. A flow that must survive a failed chip
+     * read should call captureDocument and readNFC separately and combine the two itself.
+     *
+     * @param {Function} success - Called with progress events, then the merged result
+     * @param {Function} error - Called with a user-facing message
+     * @param {Object} mrzData - As readNFC: { documentNumber, dateOfBirth, dateOfExpiry }
+     * @param {Object} [options] - readNFC options, plus documentType and the captureDocument
+     *                 image options (maxImageDimension, maxImageBytes, jpegQuality, title)
+     */
+    captureAndReadNFC: function(success, error, mrzData, options) {
+        exec(function(data) {
+            if (data && !data.event) {
+                data.verification = summarise(data);
+            }
+            success(data);
+        }, error, SERVICE_NAME, 'captureAndReadNFC', [mrzData, options || {}]);
+    },
+
+    /**
      * Photograph a proof of address — a utility bill, a bank statement, a tenancy contract.
      *
      * One page, same review step, same options as captureDocument except that there is no

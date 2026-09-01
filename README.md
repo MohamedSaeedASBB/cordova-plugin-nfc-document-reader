@@ -11,7 +11,7 @@ Everything runs on the device. No document data, portrait or biometric template 
 
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `cancelRead`
+- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureProofOfAddress`, `cancelRead`
 - [Typical flow](#typical-flow)
 - [Result payload](#result-payload)
 - [Provisioning](#provisioning) — face-match model, CSCA trust store, threshold
@@ -205,6 +205,36 @@ picture. An `ocr: true` passed here is ignored.
 | `maxImageBytes` | `512000` | Quality steps down until it fits |
 | `jpegQuality` | `90` | Starting quality |
 | `title` | per type | Screen title |
+
+### `captureAndReadNFC(success, error, mrzData, [options])`  *(Android only)*
+
+Photographs the card **and** reads its chip on one callback. Photographs first — the customer is
+already holding the card, and tapping it to the phone is the natural next move.
+
+```js
+window.NfcDocumentReader.captureAndReadNFC(function (data) {
+    if (data.event) { return show(data.state); }      // same progress events as readNFC
+    // data.capture.sides.front.imageBase64  — the photographs
+    // data.authentication, data.faceComparison, data.verification — the chip read
+}, function (error) {
+    show(error);
+}, mrz, { documentType: "id", liveness: true });
+```
+
+The result is the `readNFC` payload with one field added:
+
+```json
+"capture": { "captureType": "document", "documentType": "id",
+             "images": [ … ], "sides": { "front": { … }, "back": { … } },
+             "capturedAt": 1756704000000 }
+```
+
+Options are `readNFC`'s, plus `documentType` and the `captureDocument` image options. No OCR — the
+chip carries these fields signed, so the photographs are for the record, not for reading.
+
+> **If the chip read fails, the photographs are discarded with it.** The error callback carries a
+> message, not a payload. A flow that must survive a failed chip read should call `captureDocument`
+> and `readNFC` separately and combine the two itself.
 
 ### `captureProofOfAddress(success, error, [options])`  *(Android only)*
 
