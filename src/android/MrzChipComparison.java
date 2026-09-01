@@ -73,10 +73,14 @@ final class MrzChipComparison {
                     scanned.getDateOfBirth(), chip.optString("dateOfBirth"));
             compareField(compared, mismatches, "dateOfExpiry",
                     scanned.getDateOfExpiry(), chip.optString("dateOfExpiry"));
-            compareField(compared, mismatches, "primaryIdentifier",
-                    scanned.getPrimaryIdentifier(), chip.optString("primaryIdentifier"));
-            compareField(compared, mismatches, "secondaryIdentifier",
-                    scanned.getSecondaryIdentifier(), chip.optString("secondaryIdentifier"));
+            // Surname and given names are compared as one string, not as two fields. The MRZ
+            // separates them with "<<", and a single chevron misread as a letter — "ISA<<SHEREEN"
+            // scanned as "ISAK<SHEREEN" — moves the whole name into the surname and empties the
+            // given names. Compared separately that reads as two catastrophic mismatches; compared
+            // as one name it is what it actually is, a single wrong character.
+            compareField(compared, mismatches, "name",
+                    join(scanned.getPrimaryIdentifier(), scanned.getSecondaryIdentifier()),
+                    join(chip.optString("primaryIdentifier"), chip.optString("secondaryIdentifier")));
             compareField(compared, mismatches, "nationality",
                     scanned.getNationality(), chip.optString("nationality"));
             compareField(compared, mismatches, "issuingState",
@@ -87,11 +91,17 @@ final class MrzChipComparison {
             comparison.put("fieldsCompared", compared);
             comparison.put("mismatches", mismatches);
             comparison.put("status", mismatches.length() == 0 ? "matched" : "mismatch");
+            if (mismatches.length() > 0) {
+                // A mismatch cannot be judged without seeing what was actually read off the card.
+                // Everything here already appears elsewhere in the payload.
+                comparison.put("scannedMrz", joined);
+            }
             // Says plainly why three of these could never have disagreed, so nobody reads the
             // match as stronger evidence than it is.
             comparison.put("note", "documentNumber, dateOfBirth and dateOfExpiry derive the chip "
                     + "access key, so a successful read already agreed with them. A mismatch "
-                    + "elsewhere may equally be an OCR misread of worn print.");
+                    + "elsewhere may equally be an OCR misread of worn print: check 'distance' "
+                    + "before treating one as evidence of tampering.");
 
             Log.i(TAG, "Printed MRZ vs chip: " + comparison.optString("status")
                     + " (" + mismatches.length() + " mismatched of " + compared.length() + ")");
@@ -114,8 +124,39 @@ final class MrzChipComparison {
             mismatch.put("field", field);
             mismatch.put("printed", scanned);
             mismatch.put("chip", chip);
+            // How far apart, so a caller can tell one misread character from a different person.
+            // A single chevron read as a letter costs 1; a substituted name costs most of its
+            // length. What counts as tolerable is a policy decision and is left to the backend.
+            int distance = editDistance(a, b);
+            mismatch.put("distance", distance);
+            mismatch.put("comparedLength", Math.max(a.length(), b.length()));
             mismatches.put(mismatch);
         } catch (Exception ignored) {}
+    }
+
+    private static String join(String first, String second) {
+        String a = first != null ? first : "";
+        String b = second != null ? second : "";
+        return (a + " " + b).trim();
+    }
+
+    /** Levenshtein distance, on the normalised forms. */
+    private static int editDistance(String a, String b) {
+        int[] previous = new int[b.length() + 1];
+        int[] current = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) previous[j] = j;
+
+        for (int i = 1; i <= a.length(); i++) {
+            current[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int substitution = previous[j - 1] + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1);
+                current[j] = Math.min(substitution, Math.min(previous[j] + 1, current[j - 1] + 1));
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[b.length()];
     }
 
     /** MRZ filler characters, spacing and case carry no meaning; a difference in them is not one. */
