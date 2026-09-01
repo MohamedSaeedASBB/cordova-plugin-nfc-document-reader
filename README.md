@@ -182,13 +182,19 @@ window.NfcDocumentReader.captureDocument(function (result) {
 {
   "captureType": "document",
   "documentType": "id",
-  "images": [ { "key": "front", "label": "Front of the card", "imageBase64": "…",
-                "imageMimeType": "image/jpeg", "imageBytes": 214003,
-                "imageWidth": 1600, "imageHeight": 1010, "jpegQuality": 90, "ocr": { … } } ],
-  "sides": { "front": { … }, "back": { … } },
+  "sides": {
+    "front": { "key": "front", "label": "Front of the card", "imageBase64": "…",
+               "imageMimeType": "image/jpeg", "imageBytes": 106842,
+               "imageWidth": 900, "imageHeight": 1200, "jpegQuality": 80 },
+    "back":  { … }
+  },
+  "order": ["front", "back"],
   "capturedAt": 1756704000000
 }
 ```
+
+Entries appear once, under `sides`. `order` gives the sequence without repeating the images —
+carrying each base64 twice doubled the payload for no benefit.
 
 Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
 a photo is too blurry to read while they can still retake it.
@@ -201,9 +207,9 @@ picture. An `ocr: true` passed here is ignored.
 | Option | Default | |
 |---|---|---|
 | `documentType` | `"id"` | `"id"` captures front and back, `"passport"` front only |
-| `maxImageDimension` | `1600` | Long edge in pixels — larger than the liveness portrait, because this image must stay readable to a person |
-| `maxImageBytes` | `512000` | Quality steps down until it fits |
-| `jpegQuality` | `90` | Starting quality |
+| `maxImageDimension` | `1200` | Long edge in pixels |
+| `maxImageBytes` | `256000` | Quality steps down until the JPEG fits |
+| `jpegQuality` | `80` | Starting quality |
 | `title` | per type | Screen title |
 
 ### `captureAndReadNFC(success, error, mrzData, [options])`  *(Android only)*
@@ -225,8 +231,8 @@ The result is the `readNFC` payload with one field added:
 
 ```json
 "capture": { "captureType": "document", "documentType": "id",
-             "images": [ … ], "sides": { "front": { … }, "back": { … } },
-             "capturedAt": 1756704000000 }
+             "sides": { "front": { … }, "back": { … } },
+             "order": ["front", "back"], "capturedAt": 1756704000000 }
 ```
 
 Options are `readNFC`'s, plus `documentType` and the `captureDocument` image options. No OCR — the
@@ -247,6 +253,13 @@ window.NfcDocumentReader.captureProofOfAddress(function (result) {
     // page.imageBase64, page.ocr.lines
 }, function (error) { console.log(error); });
 ```
+
+Defaults here are larger than `captureDocument`'s — `maxImageDimension` 1800, `maxImageBytes`
+600KB, `jpegQuality` 88 — because a bill's print is small and a backend re-reading the image for
+Arabic is limited by what was sent, not by what the camera saw. Raise them for dense pages.
+
+Note the on-device OCR runs on the **full-resolution frame**, before compression, so `ocr` is not
+affected by these settings. Only the image you forward is.
 
 **OCR is on by default here, and available nowhere else.** Reading the page is the reason this
 capture exists, and unlike an ID card there is no chip behind a utility bill to take the text from

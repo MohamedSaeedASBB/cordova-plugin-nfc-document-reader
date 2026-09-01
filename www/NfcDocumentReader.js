@@ -466,9 +466,10 @@ var NfcDocumentReader = {
      *   {
      *     captureType: "document",
      *     documentType: "id" | "passport",
-     *     images: [ { key, label, imageBase64, imageMimeType, imageBytes,
-     *                 imageWidth, imageHeight, jpegQuality, ocr? } ],
-     *     sides: { front: {...}, back: {...} },   // the same entries, keyed
+     *     sides: { front: { key, label, imageBase64, imageMimeType, imageBytes,
+     *                        imageWidth, imageHeight, jpegQuality, ocr? },
+     *              back: {...} },
+     *     order: ["front", "back"],               // the sequence, without repeating the images
      *     capturedAt
      *   }
      *
@@ -483,10 +484,13 @@ var NfcDocumentReader = {
      * @param {Object} [options]
      * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
      * @param {string} [options.title] - Override the screen title
-     * @param {number} [options.maxImageDimension=1600] - Long edge in pixels. Larger than the
-     *                 liveness portrait on purpose: this image has to stay readable to a person.
-     * @param {number} [options.maxImageBytes=512000] - JPEG quality steps down until it fits
-     * @param {number} [options.jpegQuality=90] - Starting quality, 1-100
+     * @param {number} [options.maxImageDimension=1200] - Long edge in pixels
+     * @param {number} [options.maxImageBytes=256000] - Quality steps down until the JPEG fits
+     * @param {number} [options.jpegQuality=80] - Starting quality, 1-100
+     *
+     * These are tuned for a record rather than for reading: the chip supplies the fields, so the
+     * photograph only has to be legible to a person. captureProofOfAddress defaults higher, since
+     * there the picture is the data.
      */
     captureDocument: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'captureDocument', [options || {}]);
@@ -502,7 +506,7 @@ var NfcDocumentReader = {
      *
      * The result is the readNFC payload with one field added:
      *
-     *   capture: { captureType, documentType, images[], sides: { front, back }, capturedAt }
+     *   capture: { captureType, documentType, sides: { front, back }, order[], capturedAt }
      *
      * No OCR: the chip carries these fields signed, so photographing them is for the record, not
      * for reading.
@@ -534,7 +538,7 @@ var NfcDocumentReader = {
      * country, and does not pretend to. It returns the picture and, optionally, the text on it.
      *
      * Result: as captureDocument, with `captureType: "proofOfAddress"` and a single entry keyed
-     * "document".
+     * "document" — `result.sides.document.imageBase64` is the compressed JPEG.
      *
      * ON OCR AND SCRIPT COVERAGE
      * OCR is on by default here and available nowhere else: reading the page is the reason this
@@ -557,6 +561,13 @@ var NfcDocumentReader = {
      * @param {Function} error - Called with a user-facing message, including on cancellation
      * @param {Object} [options] - As captureDocument, minus documentType
      * @param {boolean} [options.ocr=true] - Return recognised text for the page
+     * @param {number} [options.maxImageDimension=1800] - Long edge in pixels
+     * @param {number} [options.maxImageBytes=614400] - Quality steps down until the JPEG fits
+     * @param {number} [options.jpegQuality=88] - Starting quality, 1-100
+     *
+     * Larger than captureDocument's, because a bill's print is small and a backend re-reading the
+     * image for Arabic is limited by what was sent, not by what the camera saw. Raise them further
+     * for dense pages; lower them if payload size matters more than legibility.
      */
     captureProofOfAddress: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);

@@ -250,6 +250,18 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             // On by default: reading the page is the reason this capture exists. There is no chip
             // behind a utility bill to take the text from instead.
             options.put("ocr", options.optBoolean("ocr", true));
+            // More room than an identity document gets. Here the picture is the data: the print on
+            // a bill is small, and a backend re-reading it for Arabic is limited by what was sent,
+            // not by what the camera saw. Only applied where the caller did not choose.
+            if (!options.has("maxImageDimension")) {
+                options.put("maxImageDimension", DocumentCaptureOptions.PROOF_MAX_DIMENSION);
+            }
+            if (!options.has("maxImageBytes")) {
+                options.put("maxImageBytes", DocumentCaptureOptions.PROOF_MAX_BYTES);
+            }
+            if (!options.has("jpegQuality")) {
+                options.put("jpegQuality", DocumentCaptureOptions.PROOF_JPEG_QUALITY);
+            }
             if (!options.has("title")) options.put("title", "Proof of address");
             if (!options.has("steps")) {
                 JSONArray steps = new JSONArray();

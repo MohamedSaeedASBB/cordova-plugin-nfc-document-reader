@@ -387,15 +387,19 @@ public class DocumentCaptureActivity extends AppCompatActivity {
             result.put("captureType", options.captureType);
             if (options.documentType != null) result.put("documentType", options.documentType);
 
-            JSONArray images = new JSONArray();
+            // Keyed only. An earlier version also returned an "images" array holding the same
+            // entries, which doubled every payload: a base64 JPEG is the largest thing here, and
+            // carrying two copies of each cost roughly 700KB on a two-sided ID for nothing.
+            // "order" gives the sequence back without repeating the images themselves.
             JSONObject byKey = new JSONObject();
+            JSONArray order = new JSONArray();
             for (JSONObject entry : captured) {
-                images.put(entry);
-                byKey.put(entry.optString("key"), entry);
+                String key = entry.optString("key");
+                byKey.put(key, entry);
+                order.put(key);
             }
-            result.put("images", images);
-            // Also keyed, so a caller can read result.sides.front without walking the array.
             result.put("sides", byKey);
+            result.put("order", order);
             result.put("capturedAt", System.currentTimeMillis());
             publishResult(result);
             setResult(Activity.RESULT_OK, new Intent());
