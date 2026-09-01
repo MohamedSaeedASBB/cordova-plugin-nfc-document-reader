@@ -248,10 +248,30 @@ The result is the `readNFC` payload plus:
 
 **What the comparison is worth.** `documentNumber`, `dateOfBirth` and `dateOfExpiry` derive the
 chip access key, so a chip that opened at all already agreed with them — they are reported as
-evidence, not as a test. The fields that can genuinely disagree are the names, nationality,
-issuing state and document code. A disagreement there is what an altered card or a transplanted
-chip looks like — **and also what a smudged character on worn print looks like to OCR**, so treat
-`mismatch` as a finding for a human rather than as proof of fraud.
+evidence, not as a test. The fields that can genuinely disagree are the name, nationality, issuing
+state and document code. A disagreement there is what an altered card or a transplanted chip looks
+like — **and also what a smudged character on worn print looks like to OCR**.
+
+So each mismatch carries a `distance`: the number of characters between the two values.
+
+```json
+"mismatches": [ { "field": "name", "printed": "ISAK SHEREEN MOHAMED S",
+                  "chip": "ISA SHEREEN MOHAMED S",
+                  "distance": 1, "comparedLength": 19 } ]
+```
+
+That example is real. The MRZ reads `ISA<<SHEREEN<MOHAMED<S`; OCR read one chevron as `K`, and
+`distance: 1` says so. A substituted name scores near its own length — 16 of 20 in testing. **Use
+`distance`, not the bare `status`, to decide what to do**: what counts as tolerable is a policy
+question, so the plugin measures and the backend decides.
+
+Surname and given names are compared as **one** string rather than as two fields. The MRZ separates
+them with `<<`, so a single misread chevron moves the whole name into the surname and empties the
+given names — which read as two catastrophic mismatches when compared separately, instead of the
+one wrong character it actually is.
+
+`scannedMrz` is included whenever the status is not `matched`, because a mismatch cannot be judged
+without seeing what was actually read off the card.
 
 `mrzComparison` is added to any `readNFC` result whose `mrzData` included `rawMrzLines`, not only
 to this flow.
