@@ -103,16 +103,17 @@ Three things that bite:
 
 #### A node per function
 
-`scanMRZ` — keep `rawMrzLines`: passing them back into `readNFC`'s `mrzData` is what enables the
-printed-versus-chip `mrzComparison`. Drop them and that check silently never runs.
+Each node hands the whole payload back as a **Text** output parameter, `ResultJson`, for the server
+to parse. Nothing needs unpacking in the client.
+
+`scanMRZ` — pass the parsed object straight back into `readNFC`'s `mrzData`, `rawMrzLines`
+included: those lines are what enables the printed-versus-chip `mrzComparison`. Strip them and that
+check silently never runs.
 
 ```js
 window.NfcDocumentReader.scanMRZ(function (mrz) {
-    $parameters.DocumentNumber = mrz.documentNumber;
-    $parameters.DateOfBirth    = mrz.dateOfBirth;      // YYMMDD
-    $parameters.DateOfExpiry   = mrz.dateOfExpiry;
-    $parameters.RawMrzLines    = JSON.stringify(mrz.rawMrzLines || []);
-    $parameters.Success        = true;
+    $parameters.ResultJson = JSON.stringify(mrz);   // documentNumber, dateOfBirth,
+    $parameters.Success    = true;                  // dateOfExpiry, format, rawMrzLines
     $resolve();
 }, function (error) {
     $parameters.Success = false; $parameters.ErrorMessage = error; $resolve();
@@ -123,11 +124,8 @@ window.NfcDocumentReader.scanMRZ(function (mrz) {
 
 ```js
 window.NfcDocumentReader.captureDocument(function (result) {
-    var front = (result.sides && result.sides.front) || {};
-    var back  = (result.sides && result.sides.back)  || {};
-    $parameters.FrontImageBase64 = front.imageBase64 || "";
-    $parameters.BackImageBase64  = back.imageBase64  || "";
-    $parameters.Success = true;
+    $parameters.ResultJson = JSON.stringify(result);
+    $parameters.Success    = true;
     $resolve();
 }, function (error) {
     $parameters.Success = false;
@@ -140,11 +138,8 @@ window.NfcDocumentReader.captureDocument(function (result) {
 
 ```js
 window.NfcDocumentReader.captureProofOfAddress(function (result) {
-    var page = (result.sides && result.sides.document) || {};
-    $parameters.ImageBase64     = page.imageBase64 || "";
-    $parameters.OcrText         = page.ocr ? (page.ocr.text || "") : "";
-    $parameters.ArabicSupported = page.ocr ? !!page.ocr.arabicSupported : false;
-    $parameters.Success = true;
+    $parameters.ResultJson = JSON.stringify(result);   // sides.document.imageBase64 + ocr
+    $parameters.Success    = true;
     $resolve();
 }, function (error) {
     $parameters.Success = false;
@@ -155,6 +150,8 @@ window.NfcDocumentReader.captureProofOfAddress(function (result) {
 
 `captureAndReadNFC` — the long one. Four screens, well over a minute, success fired many times.
 
+`ResultJson` is a **Text** output parameter holding the whole payload, for the server to parse.
+
 ```js
 var settled = false;                       // resolve exactly once
 function finish() { if (!settled) { settled = true; $resolve(); } }
@@ -164,21 +161,8 @@ window.NfcDocumentReader.captureAndReadNFC(function (data) {
         $actions.OnNfcProgress(data.state);// authenticating, readingDataGroup, livenessCheck
         return;                            // NOT the end — do not resolve
     }
-
-    var v = data.verification || {};
-    var pa = (data.authentication || {}).passiveAuthentication || {};
-    var cap = data.capture || {};
-
-    $parameters.Outcome          = v.outcome || "";           // pass | review | fail
-    $parameters.Summary          = v.summary || "";
-    $parameters.FaceMatchScore   = v.faceMatchScore;          // the backend applies the threshold
-    $parameters.DocumentAuthentic = pa.status || "";          // passed | failed | notVerified
-    $parameters.MrzStatus        = (data.mrzComparison || {}).status || "";
-    $parameters.CaptureCancelled = !!data.captureCancelled;
-    $parameters.FrontImageBase64 = ((cap.sides || {}).front || {}).imageBase64 || "";
-    $parameters.BackImageBase64  = ((cap.sides || {}).back  || {}).imageBase64 || "";
-    $parameters.ChipPortrait     = data.faceImageBase64 || "";
-    $parameters.Success          = true;
+    $parameters.ResultJson = JSON.stringify(data);
+    $parameters.Success = true;
     finish();
 }, function (error) {
     $parameters.Success = false;
@@ -187,13 +171,22 @@ window.NfcDocumentReader.captureAndReadNFC(function (data) {
 }, { documentType: "id", liveness: true });
 ```
 
-Note that **abandoning the photographs is not an error here**: the chip result still arrives on the
-success callback, with `captureCancelled: true` and no `capture`. Only a failed chip read reaches
-the error callback.
+Two things to know about this one.
 
-Extract the fields you need rather than `JSON.stringify`-ing the whole payload. A full result holds
-the chip portrait, the liveness portrait, the aligned face pair and two card photographs — well
-over a megabyte of base64 to carry in client memory.
+**Abandoning the photographs is not an error here.** The chip result still arrives on the success
+callback, with `captureCancelled: true` and no `capture`; only a failed chip read reaches the error
+callback. So do not read "no images" as a failure without checking that flag.
+
+**The string is large.** A full result carries the chip portrait, the liveness portrait, the aligned
+face pair and two card photographs — comfortably over a megabyte of base64. That is fine to hold and
+post once, but avoid copying it between client variables or across screens. If it becomes a problem,
+either pull out the fields you need instead, or post it and clear the variable immediately:
+
+```js
+$parameters.ChipPortrait     = data.faceImageBase64 || "";
+$parameters.FrontImageBase64 = (((data.capture || {}).sides || {}).front || {}).imageBase64 || "";
+$parameters.Outcome          = (data.verification || {}).outcome || "";
+```
 
 ## API
 
