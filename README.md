@@ -57,6 +57,50 @@ global as `window.NfcDocumentReader` inside a JavaScript node.
 > Reinstalling matters after any plugin change: `cordova build` does not re-sync a plugin's
 > `<source-file>` and `<resource-file>` entries. Use `cordova plugin remove` then `add`.
 
+#### Waiting for the callback in a JavaScript node
+
+**Every function here is asynchronous.** A JavaScript node returns as soon as its last line runs,
+so a flow that assigns inside a callback will move on before the callback fires and read an empty
+value. Use `$resolve()` to tell OutSystems the node is not finished:
+
+```js
+if (typeof window.NfcDocumentReader === "undefined") {
+    $parameters.IsSupported = false;
+    $resolve();
+} else {
+    window.NfcDocumentReader.isNFCAvailable(function (status) {
+        $parameters.IsSupported = status.available && status.enabled;
+        $resolve();
+    }, function (error) {
+        $parameters.IsSupported = false;
+        $resolve();          // both paths must resolve, or the action hangs
+    });
+}
+```
+
+Three things that bite:
+
+1. **A Client Action marked as a Function cannot use `$resolve()`.** Set its *Function* property to
+   *No*. A boolean check like the one above is exactly the kind of action someone makes a Function.
+2. **`readNFC` and `captureAndReadNFC` call success many times** — once per progress event, then
+   once with the result. Resolve only on the final one:
+
+   ```js
+   window.NfcDocumentReader.captureAndReadNFC(function (data) {
+       if (data.event) { $parameters.State = data.state; return; }   // progress: do NOT resolve
+       $parameters.ResultJson = JSON.stringify(data);
+       $resolve();
+   }, function (error) {
+       $parameters.ErrorMessage = error;
+       $resolve();
+   }, { documentType: "id", liveness: true });
+   ```
+
+3. **Progress cannot repaint the screen from inside the node.** Assignments to `$parameters` are
+   read once the node resolves, so push progress out through `$actions.YourClientAction(...)` if the
+   user needs to see it. And do not put a short timeout around these: an MRZ scan, a tap, a liveness
+   check and two photographs together run well past a minute.
+
 ## API
 
 All five functions take `success` and `error` callbacks. `error` always receives a
