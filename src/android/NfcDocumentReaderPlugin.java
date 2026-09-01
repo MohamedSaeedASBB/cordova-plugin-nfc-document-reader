@@ -211,6 +211,15 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             options.put("captureType", "document");
             options.put("documentType", documentType);
             options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            // No OCR here, whatever the caller asked for. The chip already carries these fields —
+            // including the Arabic — covered by the issuer's signature and hash-verified, so
+            // reading them off a photograph instead would substitute an unsigned, camera-dependent
+            // guess for data that was proven authentic. Any value passed is ignored deliberately.
+            if (options.optBoolean("ocr", false)) {
+                Log.i(TAG, "Ignoring ocr:true for captureDocument — the chip provides these fields"
+                        + " signed. OCR is available on captureProofOfAddress.");
+            }
+            options.put("ocr", false);
             if (!options.has("title")) {
                 options.put("title", "passport".equalsIgnoreCase(documentType)
                         ? "Capture passport" : "Capture ID card");
@@ -229,6 +238,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         try {
             options.put("captureType", "proofOfAddress");
+            // On by default: reading the page is the reason this capture exists. There is no chip
+            // behind a utility bill to take the text from instead.
+            options.put("ocr", options.optBoolean("ocr", true));
             if (!options.has("title")) options.put("title", "Proof of address");
             if (!options.has("steps")) {
                 JSONArray steps = new JSONArray();

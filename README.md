@@ -175,7 +175,7 @@ window.NfcDocumentReader.captureDocument(function (result) {
     // result.sides.front.imageBase64, result.sides.back.imageBase64
 }, function (error) {
     console.log(error);            // also called when the user cancels
-}, { documentType: "id", ocr: true });
+}, { documentType: "id" });
 ```
 
 ```json
@@ -193,10 +193,14 @@ window.NfcDocumentReader.captureDocument(function (result) {
 Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
 a photo is too blurry to read while they can still retake it.
 
+**There is no OCR here, by design.** The chip already carries these fields — including the Arabic —
+covered by the issuer's signature and hash-verified. Reading them off a photograph instead would
+replace proven data with a camera-dependent guess. Use `readNFC` for the data and this for the
+picture. An `ocr: true` passed here is ignored.
+
 | Option | Default | |
 |---|---|---|
 | `documentType` | `"id"` | `"id"` captures front and back, `"passport"` front only |
-| `ocr` | `false` | Also return recognised text per page |
 | `maxImageDimension` | `1600` | Long edge in pixels — larger than the liveness portrait, because this image must stay readable to a person |
 | `maxImageBytes` | `512000` | Quality steps down until it fits |
 | `jpegQuality` | `90` | Starting quality |
@@ -211,15 +215,19 @@ Same options minus `documentType`, and the single entry is keyed `"document"`.
 window.NfcDocumentReader.captureProofOfAddress(function (result) {
     var page = result.sides.document;
     // page.imageBase64, page.ocr.lines
-}, function (error) { console.log(error); }, { ocr: true });
+}, function (error) { console.log(error); });
 ```
+
+**OCR is on by default here, and available nowhere else.** Reading the page is the reason this
+capture exists, and unlike an ID card there is no chip behind a utility bill to take the text from
+instead. Pass `ocr: false` for the image alone.
 
 The plugin does not judge whether a document *is* valid proof of address — it has no idea what
 counts in a given country. It returns the picture and, optionally, the text on it.
 
 ### OCR and script coverage
 
-`ocr: true` returns **raw recognised lines, never named fields.** Deciding which line is the
+OCR runs on `captureProofOfAddress` only. It returns **raw recognised lines, never named fields.** Deciding which line is the
 customer's address rather than the biller's is issuer-specific, and getting it wrong writes a
 stranger's address onto a customer record.
 
@@ -240,9 +248,16 @@ what ran:
          "arabicSupported": false }
 ```
 
-If you need the Arabic, OCR the returned image in the backend. Both engines run **entirely
-on-device** with no network call and no extra dependency — ML Kit's text model is already bundled
-for MRZ scanning, and Vision is a system framework.
+If you need the Arabic, OCR the returned image in the backend — `arabicSupported: false` is the
+flag to branch on. That is the recommended route in any case: OCR quality on Arabic is the hard
+part, and a server-side engine can be tuned and replaced without an app release. Note that AWS
+Textract's structured extraction covers six Latin languages only, so it will not do field
+extraction on an Arabic bill.
+
+Both on-device engines run with no network call and no extra dependency — ML Kit's text model is
+already bundled for MRZ scanning, and Vision is a system framework.
+
+For an ID card none of this applies: the chip carries the same fields, in Arabic, signed.
 
 ### `cancelRead(success, error)`
 

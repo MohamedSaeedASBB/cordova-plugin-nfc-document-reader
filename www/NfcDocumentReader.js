@@ -472,13 +472,16 @@ var NfcDocumentReader = {
      *     capturedAt
      *   }
      *
-     * `ocr` is present only when `options.ocr` is true — see the note on script coverage below.
+     * There is deliberately no OCR here. The chip already carries these fields — including the
+     * Arabic — covered by the issuer's signature and hash-verified, so reading them off a
+     * photograph would replace proven data with a camera-dependent guess. Use readNFC for the
+     * data and this only for the picture. OCR lives on captureProofOfAddress, where there is no
+     * chip to read instead.
      *
      * @param {Function} success - Called with the capture result
      * @param {Function} error - Called with a user-facing message, including on cancellation
      * @param {Object} [options]
      * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
-     * @param {boolean} [options.ocr=false] - Also return recognised text for each page
      * @param {string} [options.title] - Override the screen title
      * @param {number} [options.maxImageDimension=1600] - Long edge in pixels. Larger than the
      *                 liveness portrait on purpose: this image has to stay readable to a person.
@@ -500,9 +503,13 @@ var NfcDocumentReader = {
      * "document".
      *
      * ON OCR AND SCRIPT COVERAGE
-     * `options.ocr` returns raw recognised lines, never named fields: deciding which line is the
-     * customer's address rather than the biller's is issuer-specific and not something this plugin
-     * can do safely.
+     * OCR is on by default here and available nowhere else: reading the page is the reason this
+     * capture exists, and unlike an ID card there is no chip behind a utility bill to take the
+     * text from instead. Pass `ocr: false` to skip it and get the image alone.
+     *
+     * It returns raw recognised lines, never named fields: deciding which line is the customer's
+     * address rather than the biller's is issuer-specific and not something this plugin can do
+     * safely.
      *
      * Coverage differs by platform, and the result says which engine ran and what it covers:
      *   Android - ML Kit Text Recognition v2. Latin script only; there is no Arabic model, so on a
@@ -515,6 +522,7 @@ var NfcDocumentReader = {
      * @param {Function} success - Called with the capture result
      * @param {Function} error - Called with a user-facing message, including on cancellation
      * @param {Object} [options] - As captureDocument, minus documentType
+     * @param {boolean} [options.ocr=true] - Return recognised text for the page
      */
     captureProofOfAddress: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
