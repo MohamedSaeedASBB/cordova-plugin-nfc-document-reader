@@ -454,6 +454,115 @@ var NfcDocumentReader = {
     summarise: summarise,
 
     /**
+     * Photograph the document itself, one side at a time.
+     *
+     * An ID card is captured front and back; a passport is captured once, at the photo page. The
+     * step list follows from `documentType` — the caller does not describe the sides.
+     *
+     * Each shot is reviewed on screen before it is kept, because nothing downstream can tell the
+     * operator that a photo is too blurry to read while they can still retake it.
+     *
+     * Result:
+     *   {
+     *     captureType: "document",
+     *     documentType: "id" | "passport",
+     *     images: [ { key, label, imageBase64, imageMimeType, imageBytes,
+     *                 imageWidth, imageHeight, jpegQuality, ocr? } ],
+     *     sides: { front: {...}, back: {...} },   // the same entries, keyed
+     *     capturedAt
+     *   }
+     *
+     * There is deliberately no OCR here. The chip already carries these fields — including the
+     * Arabic — covered by the issuer's signature and hash-verified, so reading them off a
+     * photograph would replace proven data with a camera-dependent guess. Use readNFC for the
+     * data and this only for the picture. OCR lives on captureProofOfAddress, where there is no
+     * chip to read instead.
+     *
+     * @param {Function} success - Called with the capture result
+     * @param {Function} error - Called with a user-facing message, including on cancellation
+     * @param {Object} [options]
+     * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
+     * @param {string} [options.title] - Override the screen title
+     * @param {number} [options.maxImageDimension=1600] - Long edge in pixels. Larger than the
+     *                 liveness portrait on purpose: this image has to stay readable to a person.
+     * @param {number} [options.maxImageBytes=512000] - JPEG quality steps down until it fits
+     * @param {number} [options.jpegQuality=90] - Starting quality, 1-100
+     */
+    captureDocument: function(success, error, options) {
+        exec(success, error, SERVICE_NAME, 'captureDocument', [options || {}]);
+    },
+
+    /**
+     * Photograph the ID card and read its chip, on one callback.
+     *
+     * Photographs first — the customer is already holding the card, and tapping it to the phone is
+     * the natural next move. An ID card is photographed front and back, a passport at its photo
+     * page, exactly as captureDocument does; the chip read then runs exactly as readNFC does,
+     * including its progress events and its liveness and face-match options.
+     *
+     * The result is the readNFC payload with one field added:
+     *
+     *   capture: { captureType, documentType, images[], sides: { front, back }, capturedAt }
+     *
+     * No OCR: the chip carries these fields signed, so photographing them is for the record, not
+     * for reading.
+     *
+     * If the chip read fails, the error callback fires and the photographs are discarded with it —
+     * the error contract carries a message, not a payload. A flow that must survive a failed chip
+     * read should call captureDocument and readNFC separately and combine the two itself.
+     *
+     * @param {Function} success - Called with progress events, then the merged result
+     * @param {Function} error - Called with a user-facing message
+     * @param {Object} mrzData - As readNFC: { documentNumber, dateOfBirth, dateOfExpiry }
+     * @param {Object} [options] - readNFC options, plus documentType and the captureDocument
+     *                 image options (maxImageDimension, maxImageBytes, jpegQuality, title)
+     */
+    captureAndReadNFC: function(success, error, mrzData, options) {
+        exec(function(data) {
+            if (data && !data.event) {
+                data.verification = summarise(data);
+            }
+            success(data);
+        }, error, SERVICE_NAME, 'captureAndReadNFC', [mrzData, options || {}]);
+    },
+
+    /**
+     * Photograph a proof of address — a utility bill, a bank statement, a tenancy contract.
+     *
+     * One page, same review step, same options as captureDocument except that there is no
+     * document type: the plugin has no idea what a valid proof of address looks like in a given
+     * country, and does not pretend to. It returns the picture and, optionally, the text on it.
+     *
+     * Result: as captureDocument, with `captureType: "proofOfAddress"` and a single entry keyed
+     * "document".
+     *
+     * ON OCR AND SCRIPT COVERAGE
+     * OCR is on by default here and available nowhere else: reading the page is the reason this
+     * capture exists, and unlike an ID card there is no chip behind a utility bill to take the
+     * text from instead. Pass `ocr: false` to skip it and get the image alone.
+     *
+     * It returns raw recognised lines, never named fields: deciding which line is the customer's
+     * address rather than the biller's is issuer-specific and not something this plugin can do
+     * safely.
+     *
+     * Coverage differs by platform, and the result says which engine ran and what it covers:
+     *   Android - ML Kit Text Recognition v2. Latin script only; there is no Arabic model, so on a
+     *             bilingual document the Arabic is simply absent from the output.
+     *   iOS     - Apple Vision, which does recognise Arabic on recent iOS versions.
+     * "No Arabic in the output" and "no Arabic on the page" look identical downstream, which is
+     * why `ocr.arabicSupported` is reported rather than left to be inferred. A backend that needs
+     * the Arabic can OCR the returned image itself.
+     *
+     * @param {Function} success - Called with the capture result
+     * @param {Function} error - Called with a user-facing message, including on cancellation
+     * @param {Object} [options] - As captureDocument, minus documentType
+     * @param {boolean} [options.ocr=true] - Return recognised text for the page
+     */
+    captureProofOfAddress: function(success, error, options) {
+        exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
+    },
+
+    /**
      * Cancel an ongoing NFC reading operation.
      * @param {Function} success - Called on successful cancellation
      * @param {Function} error - Called with error message string

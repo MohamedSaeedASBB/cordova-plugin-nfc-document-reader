@@ -37,6 +37,9 @@
             <activity android:name="com.nfcdocumentreader.LivenessCameraActivity"
                       android:theme="@style/Theme.AppCompat.NoActionBar"
                       android:screenOrientation="portrait" />
+            <activity android:name="com.nfcdocumentreader.DocumentCaptureActivity"
+                      android:theme="@style/Theme.AppCompat.NoActionBar"
+                      android:screenOrientation="portrait" />
         </config-file>
 
                      Cordova fails plugin install if a resource-file src does not exist, which is why
@@ -54,6 +57,7 @@
         <resource-file src="src/android/nfc_tech_filter.xml" target="res/xml/nfc_tech_filter.xml" />
         <resource-file src="src/android/activity_mrz_camera.xml" target="res/layout/activity_mrz_camera.xml" />
         <resource-file src="src/android/activity_liveness_camera.xml" target="res/layout/activity_liveness_camera.xml" />
+        <resource-file src="src/android/activity_document_capture.xml" target="res/layout/activity_document_capture.xml" />
         <resource-file src="src/android/dialog_nfc_scan.xml" target="res/layout/dialog_nfc_scan.xml" />
 
         <source-file src="src/android/NfcDocumentReaderPlugin.java" target-dir="src/com/nfcdocumentreader" />
@@ -72,6 +76,8 @@
         <source-file src="src/android/PassiveAuthenticator.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/SystemBarInsets.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/MrtdTextDecoder.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/DocumentCaptureActivity.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/DocumentCaptureOptions.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />

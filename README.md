@@ -11,7 +11,7 @@ Everything runs on the device. No document data, portrait or biometric template 
 
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `cancelRead`
+- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureProofOfAddress`, `cancelRead`
 - [Typical flow](#typical-flow)
 - [Result payload](#result-payload)
 - [Provisioning](#provisioning) — face-match model, CSCA trust store, threshold
@@ -163,6 +163,131 @@ Options: `challenges[]`, `challengeCount` (2), `overallTimeoutMs` (45000), `perC
 `jpegQuality` (85), `cropToFace` (true), `includeFullFrame`, `includeChallengeFrames`, `prompts`.
 
 Omit `challenges` so the sequence is random — a fixed order is replayable.
+
+### `captureDocument(success, error, [options])`  *(Android only)*
+
+Photographs the document itself. **An ID card is captured front and back; a passport is captured
+once, at the photo page** — the step list follows from `documentType`, so the caller does not
+describe the sides.
+
+```js
+window.NfcDocumentReader.captureDocument(function (result) {
+    // result.sides.front.imageBase64, result.sides.back.imageBase64
+}, function (error) {
+    console.log(error);            // also called when the user cancels
+}, { documentType: "id" });
+```
+
+```json
+{
+  "captureType": "document",
+  "documentType": "id",
+  "images": [ { "key": "front", "label": "Front of the card", "imageBase64": "…",
+                "imageMimeType": "image/jpeg", "imageBytes": 214003,
+                "imageWidth": 1600, "imageHeight": 1010, "jpegQuality": 90, "ocr": { … } } ],
+  "sides": { "front": { … }, "back": { … } },
+  "capturedAt": 1756704000000
+}
+```
+
+Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
+a photo is too blurry to read while they can still retake it.
+
+**There is no OCR here, by design.** The chip already carries these fields — including the Arabic —
+covered by the issuer's signature and hash-verified. Reading them off a photograph instead would
+replace proven data with a camera-dependent guess. Use `readNFC` for the data and this for the
+picture. An `ocr: true` passed here is ignored.
+
+| Option | Default | |
+|---|---|---|
+| `documentType` | `"id"` | `"id"` captures front and back, `"passport"` front only |
+| `maxImageDimension` | `1600` | Long edge in pixels — larger than the liveness portrait, because this image must stay readable to a person |
+| `maxImageBytes` | `512000` | Quality steps down until it fits |
+| `jpegQuality` | `90` | Starting quality |
+| `title` | per type | Screen title |
+
+### `captureAndReadNFC(success, error, mrzData, [options])`  *(Android only)*
+
+Photographs the card **and** reads its chip on one callback. Photographs first — the customer is
+already holding the card, and tapping it to the phone is the natural next move.
+
+```js
+window.NfcDocumentReader.captureAndReadNFC(function (data) {
+    if (data.event) { return show(data.state); }      // same progress events as readNFC
+    // data.capture.sides.front.imageBase64  — the photographs
+    // data.authentication, data.faceComparison, data.verification — the chip read
+}, function (error) {
+    show(error);
+}, mrz, { documentType: "id", liveness: true });
+```
+
+The result is the `readNFC` payload with one field added:
+
+```json
+"capture": { "captureType": "document", "documentType": "id",
+             "images": [ … ], "sides": { "front": { … }, "back": { … } },
+             "capturedAt": 1756704000000 }
+```
+
+Options are `readNFC`'s, plus `documentType` and the `captureDocument` image options. No OCR — the
+chip carries these fields signed, so the photographs are for the record, not for reading.
+
+> **If the chip read fails, the photographs are discarded with it.** The error callback carries a
+> message, not a payload. A flow that must survive a failed chip read should call `captureDocument`
+> and `readNFC` separately and combine the two itself.
+
+### `captureProofOfAddress(success, error, [options])`  *(Android only)*
+
+One page of whatever the customer brought — a utility bill, a bank statement, a tenancy contract.
+Same options minus `documentType`, and the single entry is keyed `"document"`.
+
+```js
+window.NfcDocumentReader.captureProofOfAddress(function (result) {
+    var page = result.sides.document;
+    // page.imageBase64, page.ocr.lines
+}, function (error) { console.log(error); });
+```
+
+**OCR is on by default here, and available nowhere else.** Reading the page is the reason this
+capture exists, and unlike an ID card there is no chip behind a utility bill to take the text from
+instead. Pass `ocr: false` for the image alone.
+
+The plugin does not judge whether a document *is* valid proof of address — it has no idea what
+counts in a given country. It returns the picture and, optionally, the text on it.
+
+### OCR and script coverage
+
+OCR runs on `captureProofOfAddress` only. It returns **raw recognised lines, never named fields.** Deciding which line is the
+customer's address rather than the biller's is issuer-specific, and getting it wrong writes a
+stranger's address onto a customer record.
+
+**Coverage differs by platform, and this matters for Arabic documents:**
+
+| Platform | Engine | Scripts | Arabic |
+|---|---|---|---|
+| Android | ML Kit Text Recognition v2 | Latin only (separate models exist for Chinese, Devanagari, Japanese, Korean) | **No** |
+| iOS | Apple Vision | Many, version-dependent | **Yes**, on recent iOS |
+
+On a bilingual Algerian document, Android returns the Latin half and simply omits the Arabic. Since
+"no Arabic in the output" and "no Arabic on the page" look identical downstream, the result reports
+what ran:
+
+```json
+"ocr": { "text": "…", "lines": ["…"], "lineCount": 12,
+         "engine": "mlkit-text-recognition-v2", "scripts": ["Latin"],
+         "arabicSupported": false }
+```
+
+If you need the Arabic, OCR the returned image in the backend — `arabicSupported: false` is the
+flag to branch on. That is the recommended route in any case: OCR quality on Arabic is the hard
+part, and a server-side engine can be tuned and replaced without an app release. Note that AWS
+Textract's structured extraction covers six Latin languages only, so it will not do field
+extraction on an Arabic bill.
+
+Both on-device engines run with no network call and no extra dependency — ML Kit's text model is
+already bundled for MRZ scanning, and Vision is a system framework.
+
+For an ID card none of this applies: the chip carries the same fields, in Arabic, signed.
 
 ### `cancelRead(success, error)`
 

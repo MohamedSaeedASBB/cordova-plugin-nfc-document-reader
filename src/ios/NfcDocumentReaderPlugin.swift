@@ -164,6 +164,39 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     // MARK: - readNFC
 
+    // MARK: - Document capture
+
+    /// Not yet implemented on iOS. Fails loudly rather than silently: an app calling this on an
+    /// iPhone must know it got nothing, not receive an empty result it might store as a capture.
+    ///
+    /// When it is built, the OCR side is already favourable here — Apple's Vision framework runs
+    /// entirely on-device with no extra dependency and, unlike ML Kit on Android, recognises
+    /// Arabic on recent iOS versions.
+    @objc(captureDocument:)
+    func captureDocument(command: CDVInvokedUrlCommand) {
+        rejectUnimplementedCapture(command)
+    }
+
+    @objc(captureProofOfAddress:)
+    func captureProofOfAddress(command: CDVInvokedUrlCommand) {
+        rejectUnimplementedCapture(command)
+    }
+
+    /// The chip half works on iOS; the camera half does not, and half a combined call is not a
+    /// result. Callers who need the chip read alone on iOS should use readNFC.
+    @objc(captureAndReadNFC:)
+    func captureAndReadNFC(command: CDVInvokedUrlCommand) {
+        rejectUnimplementedCapture(command)
+    }
+
+    private func rejectUnimplementedCapture(_ command: CDVInvokedUrlCommand) {
+        let result = CDVPluginResult(
+            status: .error,
+            messageAs: "Document capture is not available on iOS yet. Use an Android device, or "
+                     + "capture the document with the platform camera and pass the image in.")
+        commandDelegate.send(result, callbackId: command.callbackId)
+    }
+
     @objc(readNFC:)
     func readNFC(command: CDVInvokedUrlCommand) {
         guard #available(iOS 13.0, *) else {
