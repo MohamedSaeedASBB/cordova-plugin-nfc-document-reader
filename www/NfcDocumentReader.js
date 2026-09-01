@@ -466,9 +466,10 @@ var NfcDocumentReader = {
      *   {
      *     captureType: "document",
      *     documentType: "id" | "passport",
-     *     images: [ { key, label, imageBase64, imageMimeType, imageBytes,
-     *                 imageWidth, imageHeight, jpegQuality, ocr? } ],
-     *     sides: { front: {...}, back: {...} },   // the same entries, keyed
+     *     sides: { front: { key, label, imageBase64, imageMimeType, imageBytes,
+     *                        imageWidth, imageHeight, jpegQuality, ocr? },
+     *              back: {...} },
+     *     order: ["front", "back"],               // the sequence, without repeating the images
      *     capturedAt
      *   }
      *
@@ -483,47 +484,60 @@ var NfcDocumentReader = {
      * @param {Object} [options]
      * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
      * @param {string} [options.title] - Override the screen title
-     * @param {number} [options.maxImageDimension=1600] - Long edge in pixels. Larger than the
-     *                 liveness portrait on purpose: this image has to stay readable to a person.
-     * @param {number} [options.maxImageBytes=512000] - JPEG quality steps down until it fits
-     * @param {number} [options.jpegQuality=90] - Starting quality, 1-100
+     * @param {number} [options.maxImageDimension=1200] - Long edge in pixels
+     * @param {number} [options.maxImageBytes=256000] - Quality steps down until the JPEG fits
+     * @param {number} [options.jpegQuality=80] - Starting quality, 1-100
+     *
+     * These are tuned for a record rather than for reading: the chip supplies the fields, so the
+     * photograph only has to be legible to a person. captureProofOfAddress defaults higher, since
+     * there the picture is the data.
      */
     captureDocument: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'captureDocument', [options || {}]);
     },
 
     /**
-     * Photograph the ID card and read its chip, on one callback.
+     * The whole document check in one call: scan the MRZ, read the chip, confirm the two agree,
+     * then photograph the card.
      *
-     * Photographs first — the customer is already holding the card, and tapping it to the phone is
-     * the natural next move. An ID card is photographed front and back, a passport at its photo
-     * page, exactly as captureDocument does; the chip read then runs exactly as readNFC does,
-     * including its progress events and its liveness and face-match options.
+     * The order matters. The MRZ is read first because it derives the chip access key. The chip is
+     * read next, and what it holds is compared against what is printed. The photographs come last,
+     * so the card is only photographed once there is a reason to believe it is genuine — and the
+     * customer is still holding it either way.
      *
-     * The result is the readNFC payload with one field added:
+     * No mrzData argument: this function performs the scan itself, unlike readNFC.
      *
-     *   capture: { captureType, documentType, images[], sides: { front, back }, capturedAt }
+     * The result is the readNFC payload plus:
      *
-     * No OCR: the chip carries these fields signed, so photographing them is for the record, not
-     * for reading.
+     *   mrzComparison: { status, fieldsCompared[], mismatches[], note }
+     *   capture:       { captureType, documentType, sides: { front, back }, order[], capturedAt }
      *
-     * If the chip read fails, the error callback fires and the photographs are discarded with it —
-     * the error contract carries a message, not a payload. A flow that must survive a failed chip
-     * read should call captureDocument and readNFC separately and combine the two itself.
+     * `mrzComparison.status` is "matched", "mismatch", or "notCompared" when the scanned lines
+     * could not be parsed. Note that documentNumber, dateOfBirth and dateOfExpiry derive the chip
+     * access key, so a chip that opened at all already agreed with them — the fields that can
+     * genuinely disagree are the names, nationality, issuing state and document code, and those
+     * are also the ones an OCR misread can corrupt. Treat a mismatch as a finding for a human.
+     *
+     * If the photographs are abandoned, the chip result is still delivered with `capture` absent
+     * and `captureCancelled: true`. A completed read cost the customer a tap and possibly a
+     * liveness check; discarding it over a cancelled camera screen would be worse than returning
+     * it incomplete. A failed chip read, by contrast, ends on the error callback.
+     *
+     * No OCR: the chip carries these fields signed, so photographing them is for the record.
      *
      * @param {Function} success - Called with progress events, then the merged result
      * @param {Function} error - Called with a user-facing message
-     * @param {Object} mrzData - As readNFC: { documentNumber, dateOfBirth, dateOfExpiry }
-     * @param {Object} [options] - readNFC options, plus documentType and the captureDocument
-     *                 image options (maxImageDimension, maxImageBytes, jpegQuality, title)
+     * @param {Object} [options] - readNFC options (liveness, faceMatch, passiveAuth,
+     *                 includeRawDataGroups) plus documentType and the captureDocument image
+     *                 options (maxImageDimension, maxImageBytes, jpegQuality)
      */
-    captureAndReadNFC: function(success, error, mrzData, options) {
+    captureAndReadNFC: function(success, error, options) {
         exec(function(data) {
             if (data && !data.event) {
                 data.verification = summarise(data);
             }
             success(data);
-        }, error, SERVICE_NAME, 'captureAndReadNFC', [mrzData, options || {}]);
+        }, error, SERVICE_NAME, 'captureAndReadNFC', [options || {}]);
     },
 
     /**
@@ -534,7 +548,7 @@ var NfcDocumentReader = {
      * country, and does not pretend to. It returns the picture and, optionally, the text on it.
      *
      * Result: as captureDocument, with `captureType: "proofOfAddress"` and a single entry keyed
-     * "document".
+     * "document" — `result.sides.document.imageBase64` is the compressed JPEG.
      *
      * ON OCR AND SCRIPT COVERAGE
      * OCR is on by default here and available nowhere else: reading the page is the reason this
@@ -557,6 +571,13 @@ var NfcDocumentReader = {
      * @param {Function} error - Called with a user-facing message, including on cancellation
      * @param {Object} [options] - As captureDocument, minus documentType
      * @param {boolean} [options.ocr=true] - Return recognised text for the page
+     * @param {number} [options.maxImageDimension=1800] - Long edge in pixels
+     * @param {number} [options.maxImageBytes=614400] - Quality steps down until the JPEG fits
+     * @param {number} [options.jpegQuality=88] - Starting quality, 1-100
+     *
+     * Larger than captureDocument's, because a bill's print is small and a backend re-reading the
+     * image for Arabic is limited by what was sent, not by what the camera saw. Raise them further
+     * for dense pages; lower them if payload size matters more than legibility.
      */
     captureProofOfAddress: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);

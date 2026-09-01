@@ -182,13 +182,19 @@ window.NfcDocumentReader.captureDocument(function (result) {
 {
   "captureType": "document",
   "documentType": "id",
-  "images": [ { "key": "front", "label": "Front of the card", "imageBase64": "…",
-                "imageMimeType": "image/jpeg", "imageBytes": 214003,
-                "imageWidth": 1600, "imageHeight": 1010, "jpegQuality": 90, "ocr": { … } } ],
-  "sides": { "front": { … }, "back": { … } },
+  "sides": {
+    "front": { "key": "front", "label": "Front of the card", "imageBase64": "…",
+               "imageMimeType": "image/jpeg", "imageBytes": 106842,
+               "imageWidth": 900, "imageHeight": 1200, "jpegQuality": 80 },
+    "back":  { … }
+  },
+  "order": ["front", "back"],
   "capturedAt": 1756704000000
 }
 ```
+
+Entries appear once, under `sides`. `order` gives the sequence without repeating the images —
+carrying each base64 twice doubled the payload for no benefit.
 
 Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
 a photo is too blurry to read while they can still retake it.
@@ -201,40 +207,59 @@ picture. An `ocr: true` passed here is ignored.
 | Option | Default | |
 |---|---|---|
 | `documentType` | `"id"` | `"id"` captures front and back, `"passport"` front only |
-| `maxImageDimension` | `1600` | Long edge in pixels — larger than the liveness portrait, because this image must stay readable to a person |
-| `maxImageBytes` | `512000` | Quality steps down until it fits |
-| `jpegQuality` | `90` | Starting quality |
+| `maxImageDimension` | `1200` | Long edge in pixels |
+| `maxImageBytes` | `256000` | Quality steps down until the JPEG fits |
+| `jpegQuality` | `80` | Starting quality |
 | `title` | per type | Screen title |
 
-### `captureAndReadNFC(success, error, mrzData, [options])`  *(Android only)*
+### `captureAndReadNFC(success, error, [options])`  *(Android only)*
 
-Photographs the card **and** reads its chip on one callback. Photographs first — the customer is
-already holding the card, and tapping it to the phone is the natural next move.
+The whole document check in one call, in this order:
+
+1. **Scan the MRZ** — it derives the chip access key, so it has to come first
+2. **Read the chip** — with progress events, liveness and face match, exactly as `readNFC`
+3. **Compare** what is printed against what the chip holds
+4. **Photograph the card** — front and back for an ID, photo page for a passport
+
+The photographs come last on purpose: the card is only photographed once there is reason to
+believe it is genuine, and the customer is still holding it either way. **There is no `mrzData`
+argument** — this function performs the scan itself.
 
 ```js
 window.NfcDocumentReader.captureAndReadNFC(function (data) {
-    if (data.event) { return show(data.state); }      // same progress events as readNFC
-    // data.capture.sides.front.imageBase64  — the photographs
-    // data.authentication, data.faceComparison, data.verification — the chip read
+    if (data.event) { return show(data.state); }
+    // data.mrzComparison.status        — "matched" | "mismatch" | "notCompared"
+    // data.capture.sides.front.imageBase64
+    // data.authentication, data.faceComparison, data.verification
 }, function (error) {
     show(error);
-}, mrz, { documentType: "id", liveness: true });
+}, { documentType: "id", liveness: true });
 ```
 
-The result is the `readNFC` payload with one field added:
+The result is the `readNFC` payload plus:
 
 ```json
+"mrzComparison": { "status": "matched", "fieldsCompared": ["documentNumber", "…"],
+                   "mismatches": [], "note": "…" },
 "capture": { "captureType": "document", "documentType": "id",
-             "images": [ … ], "sides": { "front": { … }, "back": { … } },
-             "capturedAt": 1756704000000 }
+             "sides": { "front": { … }, "back": { … } },
+             "order": ["front", "back"], "capturedAt": 1756704000000 }
 ```
 
-Options are `readNFC`'s, plus `documentType` and the `captureDocument` image options. No OCR — the
-chip carries these fields signed, so the photographs are for the record, not for reading.
+**What the comparison is worth.** `documentNumber`, `dateOfBirth` and `dateOfExpiry` derive the
+chip access key, so a chip that opened at all already agreed with them — they are reported as
+evidence, not as a test. The fields that can genuinely disagree are the names, nationality,
+issuing state and document code. A disagreement there is what an altered card or a transplanted
+chip looks like — **and also what a smudged character on worn print looks like to OCR**, so treat
+`mismatch` as a finding for a human rather than as proof of fraud.
 
-> **If the chip read fails, the photographs are discarded with it.** The error callback carries a
-> message, not a payload. A flow that must survive a failed chip read should call `captureDocument`
-> and `readNFC` separately and combine the two itself.
+`mrzComparison` is added to any `readNFC` result whose `mrzData` included `rawMrzLines`, not only
+to this flow.
+
+> **If the photographs are abandoned**, the chip result is still delivered with `capture` absent
+> and `captureCancelled: true`. A completed read cost the customer a tap and possibly a liveness
+> check; discarding it over a cancelled camera screen would be worse than returning it incomplete.
+> A failed chip read, by contrast, ends on the error callback.
 
 ### `captureProofOfAddress(success, error, [options])`  *(Android only)*
 
@@ -247,6 +272,13 @@ window.NfcDocumentReader.captureProofOfAddress(function (result) {
     // page.imageBase64, page.ocr.lines
 }, function (error) { console.log(error); });
 ```
+
+Defaults here are larger than `captureDocument`'s — `maxImageDimension` 1800, `maxImageBytes`
+600KB, `jpegQuality` 88 — because a bill's print is small and a backend re-reading the image for
+Arabic is limited by what was sent, not by what the camera saw. Raise them for dense pages.
+
+Note the on-device OCR runs on the **full-resolution frame**, before compression, so `ocr` is not
+affected by these settings. Only the image you forward is.
 
 **OCR is on by default here, and available nowhere else.** Reading the page is the reason this
 capture exists, and unlike an ID card there is no chip behind a utility bill to take the text from

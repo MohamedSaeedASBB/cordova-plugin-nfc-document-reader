@@ -45,12 +45,13 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private CallbackContext mrzScanCallbackContext;
     private CallbackContext livenessCallbackContext;
     private CallbackContext captureCallbackContext;
-    /** Non-null while a capture is phase one of captureAndReadNFC: [mrzData, options]. */
-    private JSONArray pendingCaptureThenReadArgs;
-    /** A finished capture handed to the next readNFC, which adopts it and clears this. */
-    private JSONObject captureAwaitingRead;
-    /** The capture belonging to the read currently running. */
-    private JSONObject pendingCaptureJson;
+    /** Options held while captureAndReadNFC's MRZ scan runs, before the chip read starts. */
+    private JSONObject pendingCombinedOptions;
+    /** True when the chip read now running should photograph the card before returning. */
+    private boolean captureAfterRead = false;
+    /** The finished chip payload, waiting for the photographs to be taken and folded in. */
+    private JSONObject payloadAwaitingCapture;
+    private CallbackContext payloadAwaitingCaptureCallback;
     private NfcDocumentReader documentReader;
 
     // MRZ data for BAC authentication
@@ -250,6 +251,18 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             // On by default: reading the page is the reason this capture exists. There is no chip
             // behind a utility bill to take the text from instead.
             options.put("ocr", options.optBoolean("ocr", true));
+            // More room than an identity document gets. Here the picture is the data: the print on
+            // a bill is small, and a backend re-reading it for Arabic is limited by what was sent,
+            // not by what the camera saw. Only applied where the caller did not choose.
+            if (!options.has("maxImageDimension")) {
+                options.put("maxImageDimension", DocumentCaptureOptions.PROOF_MAX_DIMENSION);
+            }
+            if (!options.has("maxImageBytes")) {
+                options.put("maxImageBytes", DocumentCaptureOptions.PROOF_MAX_BYTES);
+            }
+            if (!options.has("jpegQuality")) {
+                options.put("jpegQuality", DocumentCaptureOptions.PROOF_JPEG_QUALITY);
+            }
             if (!options.has("title")) options.put("title", "Proof of address");
             if (!options.has("steps")) {
                 JSONArray steps = new JSONArray();
@@ -268,45 +281,84 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     }
 
     /**
-     * Photographs the card and then reads its chip, on one callback.
+     * Scan the MRZ, read the chip, check the two agree, then photograph the card — on one
+     * callback.
      *
-     * Photographs first, deliberately: the customer is already holding the card, and tapping it
-     * to the phone is the natural next move rather than the other way round.
+     * The order is the point. The MRZ has to be read first because it derives the chip access
+     * key, and the chip has to be read before the photographs so that the comparison between what
+     * is printed and what is stored happens while the customer is still at the counter with the
+     * document in their hand. Photographing first would produce images of a card nobody had yet
+     * established was genuine.
      *
-     * Note what this does NOT do. If the chip read fails, the error callback fires with a message
-     * and the photographs are discarded with it — the error contract carries a string, not a
-     * payload. A flow that must keep the images through a failed read should call captureDocument
-     * and readNFC separately and combine them itself.
+     * If the photographs are abandoned the chip result is still delivered, with capture absent
+     * and captureCancelled true: a completed read cost the customer a tap and possibly a liveness
+     * check, and throwing it away because of a cancelled camera screen would be worse than
+     * returning it incomplete.
      */
     private void captureAndReadNFC(JSONArray args, CallbackContext callbackContext) {
-        JSONObject options = args.optJSONObject(1);
+        JSONObject options = args.optJSONObject(0);
         if (options == null) options = new JSONObject();
 
-        JSONObject captureOptions = new JSONObject();
+        pendingCombinedOptions = options;
+        mrzScanCallbackContext = callbackContext;
+
+        Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
+        intent.putExtra("documentType", options.optString("documentType", "id"));
+        cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
+    }
+
+    /** Phase two: the MRZ is in hand, so read the chip with it. */
+    private void continueCombinedFlow(JSONObject mrzData, CallbackContext callback) {
+        JSONObject options = pendingCombinedOptions != null
+                ? pendingCombinedOptions : new JSONObject();
+        pendingCombinedOptions = null;
+
+        JSONArray readArgs = new JSONArray();
+        readArgs.put(mrzData);
+        readArgs.put(options);
+        captureAfterRead = true;
+        readNFC(readArgs, callback);
+    }
+
+    /** Phase four: photograph the card, now that the chip has been read and checked. */
+    private void launchCaptureAfterRead(JSONObject payload, CallbackContext callback) {
+        JSONObject options = new JSONObject();
         try {
-            // Only the capture-side options travel to the camera; liveness, faceMatch and the rest
-            // belong to the chip read that follows.
-            String documentType = options.optString("documentType", "id");
-            captureOptions.put("documentType", documentType);
-            if (options.has("title")) captureOptions.put("title", options.optString("title"));
-            for (String key : new String[] { "maxImageDimension", "maxImageBytes", "jpegQuality" }) {
-                if (options.has(key)) captureOptions.put(key, options.opt(key));
-            }
-            captureOptions.put("captureType", "document");
-            captureOptions.put("ocr", false);           // the chip supplies these fields, signed
-            captureOptions.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
-            if (!captureOptions.has("title")) {
-                captureOptions.put("title", "passport".equalsIgnoreCase(documentType)
-                        ? "Capture passport" : "Capture ID card");
-            }
+            String documentType = payload.optString("documentType", "id");
+            // The MRZ document code is "P" for a passport and "I"/"ID" for a card; either way the
+            // chip has just told us what this document is, so the step list follows from it
+            // rather than from what the caller guessed at the start.
+            boolean isPassport = documentType.toUpperCase().startsWith("P");
+            String captureType = isPassport ? "passport" : "id";
+            options.put("captureType", "document");
+            options.put("documentType", captureType);
+            options.put("ocr", false);          // the chip supplies these fields, signed
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(captureType));
+            options.put("title", isPassport ? "Capture passport" : "Capture ID card");
         } catch (JSONException e) {
-            callbackContext.error("Invalid capture options: " + e.getMessage());
+            // Cannot photograph, but the chip read succeeded — deliver that rather than nothing.
+            Log.w(TAG, "Could not build capture options after the read: " + e.getMessage());
+            sendFinalPayload(callback, payload, "CAPTURE_NOT_STARTED");
             return;
         }
 
-        pendingCaptureThenReadArgs = args;
-        captureAwaitingRead = null;
-        launchCapture(captureOptions, callbackContext);
+        payloadAwaitingCapture = payload;
+        payloadAwaitingCaptureCallback = callback;
+        launchCapture(options, callback);
+    }
+
+    /** One exit for the combined flow, so the payload shape is the same however it got here. */
+    private void sendFinalPayload(CallbackContext callback, JSONObject payload, String captureIssue) {
+        if (callback == null) return;
+        if (captureIssue != null) {
+            try {
+                payload.put("captureCancelled", true);
+                payload.put("captureIssue", captureIssue);
+            } catch (JSONException ignored) {}
+        }
+        PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, payload);
+        pluginResult.setKeepCallback(false);
+        callback.sendPluginResult(pluginResult);
     }
 
     private void launchCapture(JSONObject options, CallbackContext callbackContext) {
@@ -322,31 +374,39 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         // Same reason as the liveness result: the payload carries base64 JPEGs, which are far too
         // large for Intent extras, so the activity hands it over in memory.
         JSONObject result = DocumentCaptureActivity.consumeResult();
-        CallbackContext callback = captureCallbackContext;
-        captureCallbackContext = null;
-        JSONArray thenReadArgs = pendingCaptureThenReadArgs;
-        pendingCaptureThenReadArgs = null;
-        if (callback == null) return;
-
         boolean captured = resultCode == Activity.RESULT_OK && result != null;
 
-        if (thenReadArgs == null) {
+        JSONObject waitingPayload = payloadAwaitingCapture;
+        CallbackContext waitingCallback = payloadAwaitingCaptureCallback;
+        payloadAwaitingCapture = null;
+        payloadAwaitingCaptureCallback = null;
+
+        if (waitingPayload != null) {
+            // Last phase of captureAndReadNFC. A cancelled camera must not discard a chip read
+            // that already cost the customer a tap and possibly a liveness check.
             if (captured) {
-                callback.success(result);
+                try {
+                    waitingPayload.put("capture", result);
+                } catch (JSONException e) {
+                    Log.w(TAG, "Could not attach the capture: " + e.getMessage());
+                }
+                sendFinalPayload(waitingCallback, waitingPayload, null);
             } else {
-                callback.error("Document capture was cancelled.");
+                sendFinalPayload(waitingCallback, waitingPayload, "CAPTURE_CANCELLED");
             }
+            captureCallbackContext = null;
             return;
         }
 
-        // Phase one of captureAndReadNFC. Abandoning the photos abandons the whole flow: the chip
-        // read would otherwise start behind a screen the user just backed out of.
-        if (!captured) {
+        CallbackContext callback = captureCallbackContext;
+        captureCallbackContext = null;
+        if (callback == null) return;
+
+        if (captured) {
+            callback.success(result);
+        } else {
             callback.error("Document capture was cancelled.");
-            return;
         }
-        captureAwaitingRead = result;
-        readNFC(thenReadArgs, callback);
     }
 
     // ==================== checkLiveness ====================
@@ -476,9 +536,15 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
                     documentJson.put("faceComparison", outcome.json);
 
-                    PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, documentJson);
-                    pluginResult.setKeepCallback(false);
-                    callback.sendPluginResult(pluginResult);
+                    if (captureAfterRead) {
+                        // Same tail as the non-liveness path: the card is photographed last, once
+                        // the chip has been read and checked against the print.
+                        captureAfterRead = false;
+                        launchCaptureAfterRead(documentJson, callback);
+                        return;
+                    }
+
+                    sendFinalPayload(callback, documentJson, null);
                 } catch (Exception e) {
                     Log.e(TAG, "Error building liveness comparison result: " + e.getMessage(), e);
                     callback.error("The document was read but the face comparison failed. Please try again.");
@@ -545,12 +611,21 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 }
                 result.put("rawMrzLines", linesArray);
 
+                if (pendingCombinedOptions != null) {
+                    // captureAndReadNFC: the scan was phase one, so continue rather than return.
+                    CallbackContext callback = mrzScanCallbackContext;
+                    mrzScanCallbackContext = null;
+                    continueCombinedFlow(result, callback);
+                    return;
+                }
+
                 mrzScanCallbackContext.success(result);
             } catch (JSONException e) {
                 mrzScanCallbackContext.error("Error building MRZ result: " + e.getMessage());
             }
         } else {
             String errorMsg = intent != null ? intent.getStringExtra("error") : "MRZ scan cancelled";
+            pendingCombinedOptions = null;
             mrzScanCallbackContext.error(errorMsg != null ? errorMsg : "MRZ scan cancelled");
         }
         mrzScanCallbackContext = null;
@@ -573,10 +648,6 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         pendingFaceMatchConfig = null;
         pendingPassiveAuthConfig = null;
         pendingIncludeRawDataGroups = false;
-        // Adopt a capture only if one was just taken for this read. A plain readNFC clears it, so
-        // photographs from an abandoned combined flow cannot attach themselves to a later read.
-        pendingCaptureJson = captureAwaitingRead;
-        captureAwaitingRead = null;
 
         // Optional second argument: { liveness: {...}, faceMatch: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -833,16 +904,15 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
                         JSONObject result = data.toJSON();
 
-                        // Fold in the photographs taken before the chip read, on both the plain
-                        // and the liveness paths — this result becomes pendingDocumentJson below.
-                        if (pendingCaptureJson != null) {
-                            try {
-                                result.put("capture", pendingCaptureJson);
-                            } catch (JSONException e) {
-                                Log.w(TAG, "Could not attach the capture to the chip result: "
-                                        + e.getMessage());
-                            }
-                            pendingCaptureJson = null;
+                        // What the document says in print, against what its chip says. Runs
+                        // whenever the scanned MRZ lines were supplied, not only in the combined
+                        // flow, and on both the plain and the liveness paths — this result becomes
+                        // pendingDocumentJson below.
+                        try {
+                            result.put("mrzComparison",
+                                    MrzChipComparison.compare(pendingRawMrzInfo, result));
+                        } catch (JSONException e) {
+                            Log.w(TAG, "Could not attach the MRZ comparison: " + e.getMessage());
                         }
 
                         if (pendingLivenessOptionsJson != null) {
@@ -858,9 +928,16 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                             return;
                         }
 
-                        PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, result);
-                        pluginResult.setKeepCallback(false);
-                        callback.sendPluginResult(pluginResult);
+                        if (captureAfterRead) {
+                            // The chip has been read and checked against the print; now photograph
+                            // the card the customer is still holding.
+                            captureAfterRead = false;
+                            nfcReadingActive = false;
+                            launchCaptureAfterRead(result, callback);
+                            return;
+                        }
+
+                        sendFinalPayload(callback, result, null);
                     } else {
                         String userMessage = documentReader.getError();
                         if (userMessage == null) userMessage = "An unexpected error occurred. Please try again.";

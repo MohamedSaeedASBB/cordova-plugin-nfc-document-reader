@@ -32,18 +32,34 @@ class DocumentCaptureOptions {
     boolean runOcr = false;
 
     /**
-     * Bigger and less compressed than the liveness portrait: that one only has to survive a face
-     * matcher, this one has to stay readable to a person and to OCR.
+     * Defaults for photographing an identity document, where the picture is a record rather than
+     * a source of data — the chip already carries the fields, signed. A card fills the frame and
+     * its print is large relative to it, so 1200px stays legible to a person.
+     *
+     * Two levers, and maxBytes is the one that guarantees the ceiling: the long-edge cap decides
+     * the pixel count, the starting quality trims from there, and the encoder then steps quality
+     * down until the result fits maxBytes whatever the subject turns out to be.
+     *
+     * captureProofOfAddress raises these, because there the picture IS the data: a dense bill has
+     * small print, and whatever the backend OCRs is limited by what is sent, not by the camera.
      */
-    int maxImageDimension = 1600;
-    int maxImageBytes = 500 * 1024;
-    int jpegQuality = 90;
+    int maxImageDimension = 1200;
+    int maxImageBytes = 250 * 1024;
+    int jpegQuality = 80;
+
+    /** Proof of address: the page has to survive OCR, so it is allowed more room. */
+    static final int PROOF_MAX_DIMENSION = 1800;
+    static final int PROOF_MAX_BYTES = 600 * 1024;
+    static final int PROOF_JPEG_QUALITY = 88;
 
     ImageCompressor.Options imageOptions() {
         ImageCompressor.Options imageOptions = new ImageCompressor.Options();
         imageOptions.maxDimension = maxImageDimension;
         imageOptions.maxBytes = maxImageBytes;
         imageOptions.initialQuality = jpegQuality;
+        // Explicit, though this path passes no face box: face-cropping a utility bill would be an
+        // absurd failure, and it should not depend on an argument being null somewhere else.
+        imageOptions.cropToFace = false;
         return imageOptions;
     }
 
