@@ -541,6 +541,52 @@ var NfcDocumentReader = {
     },
 
     /**
+     * MRZ, both sides of the card, then the holder's face — for a document with no chip, or as the
+     * fallback when a chip read is not possible.
+     *
+     * Steps, in order: scan the MRZ, photograph the card (front and back for an ID, photo page for
+     * a passport), then run the liveness check.
+     *
+     * WHAT THIS DOES NOT DO
+     * It verifies nothing. Nothing collected here is signed by an issuer and nothing is compared
+     * against a chip, so `verification.documentAuthentic` is "unknown" in every result and the
+     * outcome is "review". This gathers evidence for a decision made elsewhere; readNFC and
+     * captureAndReadNFC are what produce evidence a decision can rest on.
+     *
+     * Result:
+     *   {
+     *     captureType: "documentAndLiveness",
+     *     documentType,
+     *     mrz:      { documentNumber, dateOfBirth, dateOfExpiry, format, rawMrzLines },
+     *     capture:  { sides: { front, back }, order, capturedAt },
+     *     liveness: { ...same shape as checkLiveness... },
+     *     completed, cancelledAt?, cancelReason?, capturedAt
+     *   }
+     *
+     * A step the user abandons is named in `cancelledAt` and the flow stops there, returning
+     * everything collected before it — an MRZ scan and two photographs are worth keeping even when
+     * the selfie was refused. `completed` is false in that case. Only a cancelled MRZ scan, where
+     * nothing was collected at all, reaches the error callback.
+     *
+     * @param {Function} success - Called with the result
+     * @param {Function} error - Called with a user-facing message
+     * @param {Object} [options]
+     * @param {string} [options.documentType="id"] - "id" photographs both sides, "passport" one
+     * @param {Object} [options.liveness] - checkLiveness options
+     * @param {number} [options.maxImageDimension] - As captureDocument
+     * @param {number} [options.maxImageBytes]
+     * @param {number} [options.jpegQuality]
+     */
+    captureDocumentAndLiveness: function(success, error, options) {
+        exec(function(data) {
+            if (data && !data.event) {
+                data.verification = summarise(data);
+            }
+            success(data);
+        }, error, SERVICE_NAME, 'captureDocumentAndLiveness', [options || {}]);
+    },
+
+    /**
      * Photograph a proof of address — a utility bill, a bank statement, a tenancy contract.
      *
      * One page, same review step, same options as captureDocument except that there is no

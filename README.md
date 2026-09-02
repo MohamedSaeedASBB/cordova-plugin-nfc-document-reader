@@ -11,7 +11,7 @@ Everything runs on the device. No document data, portrait or biometric template 
 
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureProofOfAddress`, `cancelRead`
+- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureDocumentAndLiveness`, `captureProofOfAddress`, `cancelRead`
 - [Typical flow](#typical-flow)
 - [Result payload](#result-payload)
 - [Provisioning](#provisioning) — face-match model, CSCA trust store, threshold
@@ -56,6 +56,150 @@ global as `window.NfcDocumentReader` inside a JavaScript node.
 
 > Reinstalling matters after any plugin change: `cordova build` does not re-sync a plugin's
 > `<source-file>` and `<resource-file>` entries. Use `cordova plugin remove` then `add`.
+
+#### Waiting for the callback in a JavaScript node
+
+**Every function here is asynchronous.** A JavaScript node returns as soon as its last line runs,
+so a flow that assigns inside a callback will move on before the callback fires and read an empty
+value. Use `$resolve()` to tell OutSystems the node is not finished:
+
+```js
+if (typeof window.NfcDocumentReader === "undefined") {
+    $parameters.IsSupported = false;
+    $resolve();
+} else {
+    window.NfcDocumentReader.isNFCAvailable(function (status) {
+        $parameters.IsSupported = status.available && status.enabled;
+        $resolve();
+    }, function (error) {
+        $parameters.IsSupported = false;
+        $resolve();          // both paths must resolve, or the action hangs
+    });
+}
+```
+
+Three things that bite:
+
+1. **A Client Action marked as a Function cannot use `$resolve()`.** Set its *Function* property to
+   *No*. A boolean check like the one above is exactly the kind of action someone makes a Function.
+2. **`readNFC` and `captureAndReadNFC` call success many times** — once per progress event, then
+   once with the result. Resolve only on the final one:
+
+   ```js
+   window.NfcDocumentReader.captureAndReadNFC(function (data) {
+       if (data.event) { $parameters.State = data.state; return; }   // progress: do NOT resolve
+       $parameters.ResultJson = JSON.stringify(data);
+       $resolve();
+   }, function (error) {
+       $parameters.ErrorMessage = error;
+       $resolve();
+   }, { documentType: "id", liveness: true });
+   ```
+
+3. **Progress cannot repaint the screen from inside the node.** Assignments to `$parameters` are
+   read once the node resolves, so push progress out through `$actions.YourClientAction(...)` if the
+   user needs to see it. And do not put a short timeout around these: an MRZ scan, a tap, a liveness
+   check and two photographs together run well past a minute.
+
+#### A node per function
+
+Each node hands the whole payload back as a **Text** output parameter, `ResultJson`, for the server
+to parse. Nothing needs unpacking in the client.
+
+`scanMRZ` — pass the parsed object straight back into `readNFC`'s `mrzData`, `rawMrzLines`
+included: those lines are what enables the printed-versus-chip `mrzComparison`. Strip them and that
+check silently never runs.
+
+```js
+window.NfcDocumentReader.scanMRZ(function (mrz) {
+    $parameters.ResultJson = JSON.stringify(mrz);   // documentNumber, dateOfBirth,
+    $parameters.Success    = true;                  // dateOfExpiry, format, rawMrzLines
+    $resolve();
+}, function (error) {
+    $parameters.Success = false; $parameters.ErrorMessage = error; $resolve();
+}, { documentType: "id" });
+```
+
+`captureDocument` — guard `sides.back`, which a passport does not have.
+
+```js
+window.NfcDocumentReader.captureDocument(function (result) {
+    $parameters.ResultJson = JSON.stringify(result);
+    $parameters.Success    = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.Cancelled = String(error).indexOf("cancelled") >= 0;
+    $resolve();
+}, { documentType: "id" });
+```
+
+`captureProofOfAddress` — branch on `arabicSupported` to decide whether the backend must re-OCR.
+
+```js
+window.NfcDocumentReader.captureProofOfAddress(function (result) {
+    $parameters.ResultJson = JSON.stringify(result);   // sides.document.imageBase64 + ocr
+    $parameters.Success    = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.Cancelled = String(error).indexOf("cancelled") >= 0;
+    $resolve();
+});
+```
+
+`captureDocumentAndLiveness` — three screens, no chip; check `completed` before trusting the set.
+
+```js
+window.NfcDocumentReader.captureDocumentAndLiveness(function (result) {
+    $parameters.ResultJson = JSON.stringify(result);
+    $parameters.Completed  = !!result.completed;      // false if a step was abandoned
+    $parameters.Success    = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false; $parameters.ErrorMessage = error; $resolve();
+}, { documentType: "id", liveness: true });
+```
+
+`captureAndReadNFC` — the long one. Four screens, well over a minute, success fired many times.
+
+`ResultJson` is a **Text** output parameter holding the whole payload, for the server to parse.
+
+```js
+var settled = false;                       // resolve exactly once
+function finish() { if (!settled) { settled = true; $resolve(); } }
+
+window.NfcDocumentReader.captureAndReadNFC(function (data) {
+    if (data.event) {                      // progress: waitingForTag, readerArmed, connecting,
+        $actions.OnNfcProgress(data.state);// authenticating, readingDataGroup, livenessCheck
+        return;                            // NOT the end — do not resolve
+    }
+    $parameters.ResultJson = JSON.stringify(data);
+    $parameters.Success = true;
+    finish();
+}, function (error) {
+    $parameters.Success = false;
+    $parameters.ErrorMessage = error;
+    finish();
+}, { documentType: "id", liveness: true });
+```
+
+Two things to know about this one.
+
+**Abandoning the photographs is not an error here.** The chip result still arrives on the success
+callback, with `captureCancelled: true` and no `capture`; only a failed chip read reaches the error
+callback. So do not read "no images" as a failure without checking that flag.
+
+**The string is large.** A full result carries the chip portrait, the liveness portrait, the aligned
+face pair and two card photographs — comfortably over a megabyte of base64. That is fine to hold and
+post once, but avoid copying it between client variables or across screens. If it becomes a problem,
+either pull out the fields you need instead, or post it and clear the variable immediately:
+
+```js
+$parameters.ChipPortrait     = data.faceImageBase64 || "";
+$parameters.FrontImageBase64 = (((data.capture || {}).sides || {}).front || {}).imageBase64 || "";
+$parameters.Outcome          = (data.verification || {}).outcome || "";
+```
 
 ## API
 
@@ -280,6 +424,41 @@ to this flow.
 > and `captureCancelled: true`. A completed read cost the customer a tap and possibly a liveness
 > check; discarding it over a cancelled camera screen would be worse than returning it incomplete.
 > A failed chip read, by contrast, ends on the error callback.
+
+### `captureDocumentAndLiveness(success, error, [options])`  *(Android only)*
+
+MRZ, both sides of the card, then the holder's face — for a document with **no chip**, or as the
+fallback when a chip read is not possible.
+
+```js
+window.NfcDocumentReader.captureDocumentAndLiveness(function (result) {
+    // result.mrz, result.capture.sides.front, result.liveness
+}, function (error) {
+    show(error);
+}, { documentType: "id", liveness: { challengeCount: 2 } });
+```
+
+```json
+{
+  "captureType": "documentAndLiveness", "documentType": "id",
+  "mrz":      { "documentNumber": "…", "dateOfBirth": "…", "dateOfExpiry": "…",
+                "format": "TD1", "rawMrzLines": [ … ] },
+  "capture":  { "sides": { "front": { … }, "back": { … } }, "order": ["front","back"] },
+  "liveness": { "passed": true, … },
+  "completed": true, "capturedAt": 1756704000000
+}
+```
+
+> **This function verifies nothing.** Nothing it collects is signed by an issuer and nothing is
+> compared against a chip, so `verification.documentAuthentic` is `"unknown"` and `outcome` is
+> `"review"` in every result. It gathers evidence for a decision made elsewhere. `readNFC` and
+> `captureAndReadNFC` are what produce evidence a decision can rest on — prefer them whenever the
+> document has a chip.
+
+A step the user abandons is named in `cancelledAt` and the flow stops there, returning everything
+collected before it: an MRZ scan and two photographs are worth keeping even when the selfie was
+refused, and `completed` is `false`. Only a cancelled MRZ scan — where nothing was collected at
+all — reaches the error callback.
 
 ### `captureProofOfAddress(success, error, [options])`  *(Android only)*
 

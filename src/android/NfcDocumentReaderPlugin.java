@@ -45,6 +45,19 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private CallbackContext mrzScanCallbackContext;
     private CallbackContext livenessCallbackContext;
     private CallbackContext captureCallbackContext;
+    /**
+     * The multi-step flow currently running, or null. Each step's result handler checks this
+     * before deciding whether it owns the result: MRZ, capture and liveness results all arrive
+     * through the same three callbacks whichever flow asked for them.
+     */
+    private String activeFlow;
+    private static final String FLOW_DOCUMENT_AND_LIVENESS = "documentAndLiveness";
+
+    /** captureDocumentAndLiveness: options, the payload being accumulated, and its callback. */
+    private JSONObject docLivenessOptions;
+    private JSONObject docLivenessPayload;
+    private CallbackContext docLivenessCallback;
+
     /** Options held while captureAndReadNFC's MRZ scan runs, before the chip read starts. */
     private JSONObject pendingCombinedOptions;
     /** True when the chip read now running should photograph the card before returning. */
@@ -160,6 +173,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 return true;
             case "captureAndReadNFC":
                 captureAndReadNFC(args, callbackContext);
+                return true;
+            case "captureDocumentAndLiveness":
+                captureDocumentAndLiveness(args, callbackContext);
                 return true;
             case "readNFC":
                 readNFC(args, callbackContext);
@@ -361,6 +377,109 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         callback.sendPluginResult(pluginResult);
     }
 
+    // ==================== captureDocumentAndLiveness ====================
+
+    /**
+     * MRZ, both sides of the card, then the holder's face — for a document with no chip to read,
+     * or as the fallback when a chip read is not possible.
+     *
+     * Same order as the chip flow for the same reason: the MRZ first because it is the document's
+     * own machine-readable summary, the photographs next while the card is in hand, the person
+     * last. What it cannot do is verify anything. Nothing here is signed by an issuer and nothing
+     * is compared against a chip, so this collects evidence for a decision made elsewhere rather
+     * than reaching one. verification.documentAuthentic is "unknown" in every result.
+     */
+    private void captureDocumentAndLiveness(JSONArray args, CallbackContext callbackContext) {
+        JSONObject options = args.optJSONObject(0);
+        if (options == null) options = new JSONObject();
+
+        docLivenessPayload = new JSONObject();
+        try {
+            docLivenessPayload.put("captureType", FLOW_DOCUMENT_AND_LIVENESS);
+            docLivenessPayload.put("documentType", options.optString("documentType", "id"));
+        } catch (JSONException e) {
+            callbackContext.error("Invalid options: " + e.getMessage());
+            return;
+        }
+
+        activeFlow = FLOW_DOCUMENT_AND_LIVENESS;
+        docLivenessOptions = options;
+        docLivenessCallback = callbackContext;
+        mrzScanCallbackContext = callbackContext;
+
+        Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
+        intent.putExtra("documentType", options.optString("documentType", "id"));
+        cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
+    }
+
+    /** Step two: photograph the card. */
+    private void docLivenessCaptureStep() {
+        JSONObject options = new JSONObject();
+        try {
+            String documentType = docLivenessOptions.optString("documentType", "id");
+            options.put("captureType", "document");
+            options.put("documentType", documentType);
+            options.put("ocr", false);
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            options.put("title", "passport".equalsIgnoreCase(documentType)
+                    ? "Capture passport" : "Capture ID card");
+            for (String key : new String[] { "maxImageDimension", "maxImageBytes", "jpegQuality" }) {
+                if (docLivenessOptions.has(key)) options.put(key, docLivenessOptions.opt(key));
+            }
+        } catch (JSONException e) {
+            finishDocLiveness("capture", "Could not start the capture: " + e.getMessage());
+            return;
+        }
+        launchCapture(options, docLivenessCallback);
+    }
+
+    /** Step three: the holder. */
+    private void docLivenessLivenessStep() {
+        LivenessCameraActivity.clearResult();
+        Intent intent = new Intent(cordova.getActivity(), LivenessCameraActivity.class);
+        Object liveness = docLivenessOptions.opt("liveness");
+        String livenessJson = liveness instanceof JSONObject ? liveness.toString() : "{}";
+        intent.putExtra(LivenessCameraActivity.EXTRA_OPTIONS, livenessJson);
+        cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
+    }
+
+    /**
+     * Ends the flow, delivering whatever was collected. A step the user abandoned is named in
+     * cancelledAt rather than thrown away with everything before it: an MRZ scan and two
+     * photographs are worth returning even when the selfie was refused, and the caller can see
+     * exactly how far the flow got.
+     */
+    private void finishDocLiveness(String cancelledAt, String errorMessage) {
+        CallbackContext callback = docLivenessCallback;
+        JSONObject payload = docLivenessPayload;
+
+        activeFlow = null;
+        docLivenessCallback = null;
+        docLivenessOptions = null;
+        docLivenessPayload = null;
+        mrzScanCallbackContext = null;
+        livenessCallbackContext = null;
+
+        if (callback == null) return;
+
+        // Nothing collected at all: this is a failure, not a partial result.
+        if (payload == null || !payload.has("mrz")) {
+            callback.error(errorMessage != null ? errorMessage : "Capture cancelled.");
+            return;
+        }
+
+        try {
+            payload.put("completed", cancelledAt == null);
+            if (cancelledAt != null) payload.put("cancelledAt", cancelledAt);
+            if (errorMessage != null) payload.put("cancelReason", errorMessage);
+            payload.put("capturedAt", System.currentTimeMillis());
+        } catch (JSONException ignored) {}
+
+        PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, payload);
+        pluginResult.setKeepCallback(false);
+        callback.sendPluginResult(pluginResult);
+    }
+
     private void launchCapture(JSONObject options, CallbackContext callbackContext) {
         captureCallbackContext = callbackContext;
         DocumentCaptureActivity.clearResult();
@@ -375,6 +494,22 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         // large for Intent extras, so the activity hands it over in memory.
         JSONObject result = DocumentCaptureActivity.consumeResult();
         boolean captured = resultCode == Activity.RESULT_OK && result != null;
+
+        if (FLOW_DOCUMENT_AND_LIVENESS.equals(activeFlow)) {
+            if (!captured) {
+                // Stop here rather than pushing a selfie camera at someone who just backed out.
+                finishDocLiveness("capture", "Document capture was cancelled.");
+                return;
+            }
+            try {
+                docLivenessPayload.put("capture", result);
+            } catch (JSONException e) {
+                Log.w(TAG, "Could not attach the capture: " + e.getMessage());
+            }
+            captureCallbackContext = null;
+            docLivenessLivenessStep();
+            return;
+        }
 
         JSONObject waitingPayload = payloadAwaitingCapture;
         CallbackContext waitingCallback = payloadAwaitingCaptureCallback;
@@ -448,6 +583,22 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         JSONObject result = LivenessCameraActivity.consumeResult();
         String errorMsg = intent != null ? intent.getStringExtra("error") : null;
         boolean ok = resultCode == Activity.RESULT_OK && result != null;
+
+        if (FLOW_DOCUMENT_AND_LIVENESS.equals(activeFlow)) {
+            if (ok) {
+                try {
+                    docLivenessPayload.put("liveness", result);
+                } catch (JSONException e) {
+                    Log.w(TAG, "Could not attach the liveness result: " + e.getMessage());
+                }
+                finishDocLiveness(null, null);
+            } else {
+                // The MRZ and the photographs are still worth returning.
+                finishDocLiveness("liveness",
+                        errorMsg != null ? errorMsg : "Liveness check cancelled");
+            }
+            return;
+        }
 
         if (pendingDocumentJson != null) {
             completeChipReadWithLiveness(ok, result, errorMsg);
@@ -611,6 +762,13 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 }
                 result.put("rawMrzLines", linesArray);
 
+                if (FLOW_DOCUMENT_AND_LIVENESS.equals(activeFlow)) {
+                    mrzScanCallbackContext = null;
+                    docLivenessPayload.put("mrz", result);
+                    docLivenessCaptureStep();
+                    return;
+                }
+
                 if (pendingCombinedOptions != null) {
                     // captureAndReadNFC: the scan was phase one, so continue rather than return.
                     CallbackContext callback = mrzScanCallbackContext;
@@ -626,6 +784,11 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         } else {
             String errorMsg = intent != null ? intent.getStringExtra("error") : "MRZ scan cancelled";
             pendingCombinedOptions = null;
+            if (FLOW_DOCUMENT_AND_LIVENESS.equals(activeFlow)) {
+                // Nothing collected yet, so this ends as an error rather than a partial result.
+                finishDocLiveness("mrz", errorMsg != null ? errorMsg : "MRZ scan cancelled");
+                return;
+            }
             mrzScanCallbackContext.error(errorMsg != null ? errorMsg : "MRZ scan cancelled");
         }
         mrzScanCallbackContext = null;
