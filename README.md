@@ -11,7 +11,7 @@ Everything runs on the device. No document data, portrait or biometric template 
 
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureProofOfAddress`, `cancelRead`
+- [API](#api) — `isNFCAvailable`, `scanMRZ`, `readNFC`, `checkLiveness`, `captureDocument`, `captureAndReadNFC`, `captureDocumentAndLiveness`, `captureProofOfAddress`, `cancelRead`
 - [Typical flow](#typical-flow)
 - [Result payload](#result-payload)
 - [Provisioning](#provisioning) — face-match model, CSCA trust store, threshold
@@ -146,6 +146,19 @@ window.NfcDocumentReader.captureProofOfAddress(function (result) {
     $parameters.Cancelled = String(error).indexOf("cancelled") >= 0;
     $resolve();
 });
+```
+
+`captureDocumentAndLiveness` — three screens, no chip; check `completed` before trusting the set.
+
+```js
+window.NfcDocumentReader.captureDocumentAndLiveness(function (result) {
+    $parameters.ResultJson = JSON.stringify(result);
+    $parameters.Completed  = !!result.completed;      // false if a step was abandoned
+    $parameters.Success    = true;
+    $resolve();
+}, function (error) {
+    $parameters.Success = false; $parameters.ErrorMessage = error; $resolve();
+}, { documentType: "id", liveness: true });
 ```
 
 `captureAndReadNFC` — the long one. Four screens, well over a minute, success fired many times.
@@ -411,6 +424,41 @@ to this flow.
 > and `captureCancelled: true`. A completed read cost the customer a tap and possibly a liveness
 > check; discarding it over a cancelled camera screen would be worse than returning it incomplete.
 > A failed chip read, by contrast, ends on the error callback.
+
+### `captureDocumentAndLiveness(success, error, [options])`  *(Android only)*
+
+MRZ, both sides of the card, then the holder's face — for a document with **no chip**, or as the
+fallback when a chip read is not possible.
+
+```js
+window.NfcDocumentReader.captureDocumentAndLiveness(function (result) {
+    // result.mrz, result.capture.sides.front, result.liveness
+}, function (error) {
+    show(error);
+}, { documentType: "id", liveness: { challengeCount: 2 } });
+```
+
+```json
+{
+  "captureType": "documentAndLiveness", "documentType": "id",
+  "mrz":      { "documentNumber": "…", "dateOfBirth": "…", "dateOfExpiry": "…",
+                "format": "TD1", "rawMrzLines": [ … ] },
+  "capture":  { "sides": { "front": { … }, "back": { … } }, "order": ["front","back"] },
+  "liveness": { "passed": true, … },
+  "completed": true, "capturedAt": 1756704000000
+}
+```
+
+> **This function verifies nothing.** Nothing it collects is signed by an issuer and nothing is
+> compared against a chip, so `verification.documentAuthentic` is `"unknown"` and `outcome` is
+> `"review"` in every result. It gathers evidence for a decision made elsewhere. `readNFC` and
+> `captureAndReadNFC` are what produce evidence a decision can rest on — prefer them whenever the
+> document has a chip.
+
+A step the user abandons is named in `cancelledAt` and the flow stops there, returning everything
+collected before it: an MRZ scan and two photographs are worth keeping even when the selfie was
+refused, and `completed` is `false`. Only a cancelled MRZ scan — where nothing was collected at
+all — reaches the error callback.
 
 ### `captureProofOfAddress(success, error, [options])`  *(Android only)*
 
