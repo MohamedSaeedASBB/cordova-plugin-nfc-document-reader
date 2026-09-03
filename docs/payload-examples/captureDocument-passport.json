@@ -1,0 +1,20 @@
+{
+  "captureType": "document",
+  "documentType": "passport",
+  "sides": {
+    "front": {
+      "key": "front",
+      "label": "Passport photo page",
+      "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+      "imageMimeType": "image/jpeg",
+      "imageBytes": 127437,
+      "imageWidth": 900,
+      "imageHeight": 1200,
+      "jpegQuality": 80
+    }
+  },
+  "order": [
+    "front"
+  ],
+  "capturedAt": 1788255648703
+}

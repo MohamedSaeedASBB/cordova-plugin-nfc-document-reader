@@ -1,0 +1,33 @@
+{
+  "captureType": "proofOfAddress",
+  "sides": {
+    "document": {
+      "key": "document",
+      "label": "Proof of address",
+      "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG, truncated for readability)",
+      "imageMimeType": "image/jpeg",
+      "imageBytes": 402118,
+      "imageWidth": 1350,
+      "imageHeight": 1800,
+      "jpegQuality": 88,
+      "ocr": {
+        "text": "ELECTRICITY AND WATER AUTHORITY\nACCOUNT NO 1234567\nBUILDING 123 ROAD 456",
+        "lines": [
+          "ELECTRICITY AND WATER AUTHORITY",
+          "ACCOUNT NO 1234567",
+          "BUILDING 123 ROAD 456"
+        ],
+        "lineCount": 3,
+        "engine": "mlkit-text-recognition-v2",
+        "scripts": [
+          "Latin"
+        ],
+        "arabicSupported": false
+      }
+    }
+  },
+  "order": [
+    "document"
+  ],
+  "capturedAt": 1788255648703
+}

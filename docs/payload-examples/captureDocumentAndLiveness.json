@@ -1,0 +1,99 @@
+{
+  "captureType": "documentAndLiveness",
+  "documentType": "id",
+  "mrz": {
+    "documentNumber": "X12345678",
+    "dateOfBirth": "900101",
+    "dateOfExpiry": "301231",
+    "format": "TD1",
+    "rawMrzLines": [
+      "IDBHRX12345678<1234567890<<<<<",
+      "9001011F3012319BHR<<<<<<<<<<<8",
+      "SURNAME<<GIVEN<NAMES<<<<<<<<<<"
+    ]
+  },
+  "capture": {
+    "captureType": "document",
+    "documentType": "id",
+    "sides": {
+      "front": {
+        "key": "front",
+        "label": "Front of the card",
+        "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+        "imageMimeType": "image/jpeg",
+        "imageBytes": 127437,
+        "imageWidth": 900,
+        "imageHeight": 1200,
+        "jpegQuality": 80
+      },
+      "back": {
+        "key": "back",
+        "label": "Back of the card",
+        "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+        "imageMimeType": "image/jpeg",
+        "imageBytes": 158685,
+        "imageWidth": 900,
+        "imageHeight": 1200,
+        "jpegQuality": 80
+      }
+    },
+    "order": [
+      "front",
+      "back"
+    ],
+    "capturedAt": 1788255648703
+  },
+  "liveness": {
+    "passed": true,
+    "capturedAt": "2026-09-01T09:40:31Z",
+    "faceImageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+    "faceImageMimeType": "image/jpeg",
+    "faceImageWidth": 720,
+    "faceImageHeight": 720,
+    "faceImageBytes": 58904,
+    "faceImageJpegQuality": 85,
+    "challenges": [
+      {
+        "type": "smile",
+        "passed": true,
+        "durationMs": 878
+      },
+      {
+        "type": "blink",
+        "passed": true,
+        "durationMs": 1217
+      }
+    ],
+    "signals": {
+      "framesAnalysed": 108,
+      "durationMs": 3888,
+      "multiFaceFrames": 0,
+      "trackingIdChanges": 0
+    },
+    "sdk": {
+      "provider": "mlkit",
+      "feature": "face-detection",
+      "platform": "android",
+      "presentationAttackDetection": false
+    }
+  },
+  "completed": true,
+  "capturedAt": 1788255648703,
+  "verification": {
+    "outcome": "review",
+    "requiresManualReview": true,
+    "checksPerformed": [
+      "liveness"
+    ],
+    "documentAuthentic": "unknown",
+    "documentTampered": false,
+    "chipUnlocked": false,
+    "holderPresent": "yes",
+    "faceMatch": "notAvailable",
+    "faceMatchScore": null,
+    "issues": [],
+    "blockingIssueCount": 0,
+    "warningCount": 0,
+    "summary": "Document authenticity could not be established. A live person was present. Face comparison was not available. Decide in the backend or send to manual review."
+  }
+}
