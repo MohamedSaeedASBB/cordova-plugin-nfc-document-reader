@@ -114,6 +114,15 @@ final class FaceMatcher {
         guard let documentPortrait = documentPortrait, let livenessPortrait = livenessPortrait else {
             return MatchResult(status: "error", similarity: nil, reason: "MISSING_PORTRAIT")
         }
+        // A nil face box means the detector found no face on that side. Embedding the whole frame
+        // instead would still produce a number, and that number is not a face comparison — a
+        // backend applying a threshold to it would read "not the same person" from a comparison
+        // that never happened. Mirrors FaceMatcher.java.
+        guard documentFaceBox != nil, livenessFaceBox != nil else {
+            NSLog("[FaceMatcher] No face detected in the %@ portrait; refusing to score.",
+                  documentFaceBox == nil ? "document" : "liveness")
+            return MatchResult(status: "error", similarity: nil, reason: "NO_FACE_DETECTED")
+        }
         guard let modelPath = resolveModelPath() else {
             // Two different situations, and reporting both as "error" sends people debugging
             // inference that never ran:

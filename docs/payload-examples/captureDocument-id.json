@@ -1,0 +1,31 @@
+{
+  "captureType": "document",
+  "documentType": "id",
+  "sides": {
+    "front": {
+      "key": "front",
+      "label": "Front of the card",
+      "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+      "imageMimeType": "image/jpeg",
+      "imageBytes": 127437,
+      "imageWidth": 900,
+      "imageHeight": 1200,
+      "jpegQuality": 80
+    },
+    "back": {
+      "key": "back",
+      "label": "Back of the card",
+      "imageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
+      "imageMimeType": "image/jpeg",
+      "imageBytes": 158685,
+      "imageWidth": 900,
+      "imageHeight": 1200,
+      "jpegQuality": 80
+    }
+  },
+  "order": [
+    "front",
+    "back"
+  ],
+  "capturedAt": 1788255648703
+}

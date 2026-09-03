@@ -131,6 +131,19 @@ public class FaceMatcher {
             result.reason = "MISSING_PORTRAIT";
             return result;
         }
+        // A null face box means the detector found no face on that side. Embedding the whole
+        // frame instead would still produce a number — observed in the field as a chip portrait
+        // with no detectable face scoring 0.1731 against a cropped selfie — and that number is
+        // not a face comparison. A backend applying a threshold to it would read "not the same
+        // person" from a comparison that never happened, which is worse than no score at all.
+        if (documentFaceBox == null || livenessFaceBox == null) {
+            Log.w(TAG, "No face detected in the "
+                    + (documentFaceBox == null ? "document" : "liveness")
+                    + " portrait; refusing to score a comparison that cannot be made.");
+            result.status = "error";
+            result.reason = "NO_FACE_DETECTED";
+            return result;
+        }
         String resolvedModelPath = resolveAssetPath(config.modelAsset);
         if (resolvedModelPath == null) {
             // Two different situations, and reporting both as "error" sends people debugging
