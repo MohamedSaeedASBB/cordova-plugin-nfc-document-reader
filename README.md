@@ -725,6 +725,100 @@ phone. They also let a backend re-decode text this plugin got wrong.
 Off by default: it is a second full copy of every field including the portrait, in the rawest form
 the holder's data takes, and it roughly doubles the payload.
 
+### Capture result shapes
+
+Every capture function returns the same envelope. `captureType` says which one produced it, and
+`sides` is keyed by the step: `front`/`back` for a document, `document` for a proof of address.
+
+**`captureDocument`** — `documentType: "id"` gives two sides; `"passport"` gives `front` only.
+
+```json
+{
+  "captureType": "document",
+  "documentType": "id",
+  "sides": {
+    "front": { "key": "front", "label": "Front of the card",
+               "imageBase64": "/9j/4AAQ…", "imageMimeType": "image/jpeg",
+               "imageBytes": 106842, "imageWidth": 900, "imageHeight": 1200,
+               "jpegQuality": 80 },
+    "back":  { "key": "back", "label": "Back of the card", "…": "same fields" }
+  },
+  "order": ["front", "back"],
+  "capturedAt": 1756900000000
+}
+```
+
+No `ocr` on this one: the chip carries these fields signed. For a passport, `label` is
+`"Passport photo page"` and `order` is `["front"]`.
+
+**`captureProofOfAddress`** — one page, keyed `document`, with `ocr` unless you passed `ocr: false`.
+
+```json
+{
+  "captureType": "proofOfAddress",
+  "sides": {
+    "document": {
+      "key": "document", "label": "Proof of address",
+      "imageBase64": "/9j/4AAQ…", "imageMimeType": "image/jpeg",
+      "imageBytes": 402118, "imageWidth": 1350, "imageHeight": 1800, "jpegQuality": 88,
+      "ocr": {
+        "text": "ELECTRICITY AND WATER AUTHORITY
+ACCOUNT …",
+        "lines": ["ELECTRICITY AND WATER AUTHORITY", "ACCOUNT …"],
+        "lineCount": 24,
+        "engine": "mlkit-text-recognition-v2",
+        "scripts": ["Latin"],
+        "arabicSupported": false
+      }
+    }
+  },
+  "order": ["document"],
+  "capturedAt": 1756900000000
+}
+```
+
+There is no `documentType` here. If recognition fails the `ocr` block still appears, with empty
+`text`, `lineCount: 0` and `"error": "OCR_FAILED"` — so the absence of text is always explained.
+
+**`captureDocumentAndLiveness`** — the three steps, each under its own key.
+
+```json
+{
+  "captureType": "documentAndLiveness",
+  "documentType": "id",
+  "mrz": { "documentNumber": "C26077133", "dateOfBirth": "260629",
+           "dateOfExpiry": "310709", "format": "TD1", "rawMrzLines": ["…", "…", "…"] },
+  "capture": { "captureType": "document", "documentType": "id",
+               "sides": { "front": { … }, "back": { … } },
+               "order": ["front", "back"], "capturedAt": 1756900000000 },
+  "liveness": { "passed": true, "faceImageBase64": "…", "challenges": [ … ],
+                "signals": { … }, "sdk": { … }, "capturedAt": "…" },
+  "completed": true,
+  "capturedAt": 1756900000000,
+  "verification": { "outcome": "review", "documentAuthentic": "unknown", … }
+}
+```
+
+`capture` is the full `captureDocument` envelope nested whole, so the same parser reads both. When
+a step is abandoned, that step's key is absent and `"completed": false` appears with
+`"cancelledAt": "capture" | "liveness"` and a `cancelReason`.
+
+**`captureAndReadNFC`** — the `readNFC` payload with two additions; `capture` is the same nested
+envelope, and `mrzComparison` is described [above](#captureandreadnfcsuccess-error-options--android-only).
+
+```json
+{
+  "documentNumber": "…", "primaryIdentifier": "…", "faceImageBase64": "…",
+  "authentication": { … }, "liveness": { … }, "faceComparison": { … },
+  "mrzComparison": { "status": "matched", … },
+  "capture": { "captureType": "document", "sides": { "front": { … }, "back": { … } }, … },
+  "verification": { "outcome": "review", … }
+}
+```
+
+If the photographs are abandoned here, `capture` is absent and `"captureCancelled": true` appears
+instead — the chip read still succeeded, so the result is still delivered.
+
 ### Non-Latin text and `textEncoding`
 
 ICAO 9303 specifies UTF-8 for the DG11/DG12 text fields, and most documents comply. Some do not:
