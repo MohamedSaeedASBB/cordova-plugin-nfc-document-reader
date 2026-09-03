@@ -47,7 +47,8 @@ var ISSUE_TEXT = {
     NO_MODEL_CONFIGURED:         ["warning",  "Face matching is switched off."],
     MODEL_NOT_FOUND:             ["warning",  "The face matching model is missing from this build."],
     EMBEDDING_LENGTH_MISMATCH:   ["warning",  "The face matching model is misconfigured."],
-    MISSING_PORTRAIT:            ["warning",  "A face could not be found in the chip photo or the selfie."],
+    MISSING_PORTRAIT:            ["warning",  "One of the two photos was missing, so no face comparison was made."],
+    NO_FACE_DETECTED:            ["warning",  "No face could be found in the chip photo or the selfie, so no face comparison was made."],
     MATCHER_FAILED:              ["warning",  "The face comparison could not be completed."],
     FACE_SCORE_RETURNED:         ["info",     "Face match score returned for the backend to decide on."],
     // Raised by summarise itself rather than by the native layer, so that every failure carries a
@@ -406,7 +407,10 @@ var NfcDocumentReader = {
      *                              MODEL_NOT_FOUND           - a modelAsset was passed explicitly
      *                                                          but is not in app assets
      *                              EMBEDDING_LENGTH_MISMATCH - model output != embeddingSize
-     *                              MISSING_PORTRAIT          - a face was not detected in one image
+     *                              NO_FACE_DETECTED          - the detector found no face in the
+     *                                                          chip portrait or the selfie, so no
+     *                                                          comparison was possible
+     *                              MISSING_PORTRAIT          - one of the two images was absent
      *                              MATCHER_FAILED            - anything else; check logcat/Console
      *                                                          for tag "FaceMatcher"
      *
