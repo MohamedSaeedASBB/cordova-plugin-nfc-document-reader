@@ -619,6 +619,19 @@ public class NfcDocumentReader {
                 } catch (Exception ignored) {}
                 documentData.telephone = safeString(dg11File.getTelephone());
 
+                // The MRZ's optional-data field is the usual home for the personal number, but not
+                // every issuer puts it there: an Algerian ID leaves it empty in the MRZ and carries
+                // it in DG11 instead. Only fills what DG1 left blank, so a card that populates both
+                // keeps the MRZ value, which is the one covered by the MRZ check digits.
+                if (documentData.personalNumber.isEmpty()) {
+                    String dg11PersonalNumber = safeString(dg11File.getPersonalNumber())
+                            .replace("<", "").trim();
+                    if (!dg11PersonalNumber.isEmpty()) {
+                        documentData.personalNumber = dg11PersonalNumber;
+                        Log.d(TAG, "Personal number taken from DG11; the MRZ field was empty");
+                    }
+                }
+
                 dataGroupsRead.add(11);
                 Log.d(TAG, "DG11 read successfully");
             } catch (Exception e) {

@@ -58,6 +58,7 @@ final class MrtdTextDecoder {
     private static final int TAG_PERMANENT_ADDRESS = 0x5F42;
     private static final int TAG_TELEPHONE         = 0x5F12;
     private static final int TAG_PERSONAL_SUMMARY  = 0x5F15;
+    private static final int TAG_PERSONAL_NUMBER   = 0x5F10;
     // DG12
     private static final int TAG_ISSUING_AUTHORITY = 0x5F19;
     private static final int TAG_ENDORSEMENTS      = 0x5F1B;
@@ -84,6 +85,7 @@ final class MrtdTextDecoder {
                 || isDamaged(data.permanentAddress)
                 || isDamaged(data.personalSummary)
                 || isDamaged(data.telephone)
+                || isDamaged(data.personalNumber)
                 || anyDamaged(data.otherNames);
         boolean dg12Damaged = isDamaged(data.issuingAuthority)
                 || isDamaged(data.endorsementsAndObservations);
@@ -98,7 +100,8 @@ final class MrtdTextDecoder {
         // One encoding for the whole document, scored across every damaged field at once.
         List<byte[]> evidence = new ArrayList<>();
         for (int tag : new int[] { TAG_FULL_NAME, TAG_OTHER_NAMES, TAG_PLACE_OF_BIRTH,
-                                   TAG_PERMANENT_ADDRESS, TAG_PERSONAL_SUMMARY, TAG_TELEPHONE }) {
+                                   TAG_PERMANENT_ADDRESS, TAG_PERSONAL_SUMMARY, TAG_TELEPHONE,
+                                   TAG_PERSONAL_NUMBER }) {
             List<byte[]> values = dg11.get(tag);
             if (values != null) evidence.addAll(values);
         }
@@ -116,10 +119,15 @@ final class MrtdTextDecoder {
             String address = decodeWith(dg11, TAG_PERMANENT_ADDRESS, encodingUsed);
             String summary = decodeWith(dg11, TAG_PERSONAL_SUMMARY, encodingUsed);
             String phone = decodeWith(dg11, TAG_TELEPHONE, encodingUsed);
+            String personalNumber = decodeWith(dg11, TAG_PERSONAL_NUMBER, encodingUsed);
 
             if (name != null) data.fullNameOfHolder = name;
             if (summary != null) data.personalSummary = summary;
             if (phone != null) data.telephone = phone;
+            // Same rule as the reader: only fills what the MRZ left blank.
+            if (personalNumber != null && data.personalNumber.isEmpty()) {
+                data.personalNumber = personalNumber.replace("<", "").trim();
+            }
             // The raw value keeps DG11's '<' separators, so split them back into the components
             // the rest of the payload exposes — otherwise a recovered field would arrive in a
             // different shape from an undamaged one.
