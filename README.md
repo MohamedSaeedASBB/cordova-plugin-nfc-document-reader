@@ -819,12 +819,25 @@ envelope, and `mrzComparison` is described [above](#captureandreadnfcsuccess-err
 If the photographs are abandoned here, `capture` is absent and `"captureCancelled": true` appears
 instead — the chip read still succeeded, so the result is still delivered.
 
+### Where each field comes from
+
+`primaryIdentifier` and `secondaryIdentifier` are the MRZ names from DG1 — Latin only, always: the
+MRZ alphabet is `A-Z`, `0-9` and `<`. **The holder's name in its own script is `fullNameOfHolder`**,
+from DG11, along with `placeOfBirth`, `permanentAddress` and `issuingAuthority`. A document with no
+DG11 returns those empty, which is a property of the card rather than a fault — `readErrors` says
+so when the chip answered FILE NOT FOUND.
+
+`personalNumber` comes from the MRZ where the issuer puts it there, and from DG11 (`0x5F10`) where
+they do not: an Algerian ID leaves the MRZ field empty and carries it in DG11. The MRZ value wins
+when a card populates both, since that is the one the MRZ check digits cover.
+
 ### Non-Latin text and `textEncoding`
 
 ICAO 9303 specifies UTF-8 for the DG11/DG12 text fields, and most documents comply. Some do not:
 an Algerian ID in testing stored its Arabic fields in a single-byte Arabic code page, so UTF-8
 decoding turned every Arabic letter into `U+FFFD` and the holder's Arabic name arrived as a row of
-boxes.
+boxes. That card decodes as **ISO-8859-6** — not windows-1256, which is why the code page is
+chosen per document from the bytes rather than assumed.
 
 The plugin detects that and decodes the affected fields again from the chip's raw bytes — the same
 bytes passive authentication hashes, so they are known to be exactly what the issuer signed. Only
