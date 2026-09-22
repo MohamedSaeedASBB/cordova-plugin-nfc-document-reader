@@ -238,11 +238,22 @@ class NfcDocumentReaderWrapper {
         case .notDone: chipAuthentication = "notDone"
         }
 
+        // Built as Any before the literal rather than inline. A ternary's branches must share one
+        // type, and "BAC" and NSNull() do not — the surrounding dictionary being [String: Any] does
+        // not rescue it, which is why this failed to compile for iOS while every other platform and
+        // every syntax-only check passed.
+        let accessProtocol: Any
+        if passport.PACEStatus == .success {
+            accessProtocol = "PACE"
+        } else if passport.BACStatus == .success {
+            accessProtocol = "BAC"
+        } else {
+            accessProtocol = NSNull()
+        }
+
         return [
             "chipAccessEstablished": passport.BACStatus == .success || passport.PACEStatus == .success,
-            "accessProtocol": passport.PACEStatus == .success
-                ? "PACE"
-                : (passport.BACStatus == .success ? "BAC" : NSNull()),
+            "accessProtocol": accessProtocol,
             "chipAuthentication": chipAuthentication,
             "passiveAuthentication": passiveAuth
         ]

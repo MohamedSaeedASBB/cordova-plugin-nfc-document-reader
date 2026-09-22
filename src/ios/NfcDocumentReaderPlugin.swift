@@ -321,7 +321,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                             // Chip read done — now prove the holder is present and compare their
                             // face against the portrait we just read off the chip. The readNFC
                             // callback deliberately stays open until that finishes.
-                            self.pendingDocumentResult = result as? [String: Any]
+                            self.pendingDocumentResult = result
                             self.sendProgressEvent(state: "livenessCheck")
                             self.documentReader = nil
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
