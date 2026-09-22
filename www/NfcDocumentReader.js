@@ -225,6 +225,15 @@ var NfcDocumentReader = {
      * @param {Function} error - Called with error message string
      * @param {Object} [options] - Optional settings
      * @param {string} [options.documentType] - "id" or "passport" for scan guidance
+     * @param {number} [options.requiredMatches=2] - How many frames must read the same MRZ before
+     *                 it is accepted. The scanner used to take the first frame that parsed, which
+     *                 let a single misread character through — one card returned a name whose "<<"
+     *                 separator had been read as a letter. Raise it for worn or glossy documents;
+     *                 1 restores the old behaviour.
+     * @param {number} [options.frameIntervalMs=250] - Minimum gap between frames the scanner looks
+     *                 at. The camera produces frames far faster than a document changes, so this
+     *                 spends less battery and lets autofocus settle between looks. Raising it
+     *                 reduces heat on long scans; lowering it makes detection feel more immediate.
      */
     scanMRZ: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'scanMRZ', [options || {}]);

@@ -240,6 +240,17 @@ window.NfcDocumentReader.scanMRZ(function (mrz) {
 }, { documentType: "id" });      // "id" or "passport" — changes the on-screen guidance only
 ```
 
+**Pacing.** The scanner accepts an MRZ only once `requiredMatches` frames (default 2) read it
+identically, sampling at most one frame every `frameIntervalMs` (default 250). It previously took
+the first frame that parsed, which let a single misread character through — one card returned a
+name whose `<<` separator had been read as the letter `K`, which surfaced later as a
+printed-versus-chip mismatch on a genuine document. The whole MRZ must agree, not just the three
+fields the chip key needs, because the name line carries no check digit.
+
+Raise `requiredMatches` for worn or glossy documents; `1` restores the old behaviour. Raise
+`frameIntervalMs` to reduce heat on long scans, lower it to make detection feel more immediate.
+Both also apply to the MRZ step inside `captureAndReadNFC` and `captureDocumentAndLiveness`.
+
 ### `readNFC(success, error, mrzData, [options])`
 
 Reads the chip. `success` is called **several times**: once per progress event, then once with the

@@ -63,11 +63,16 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         let options = command.arguments.first as? [String: Any] ?? [:]
         let documentType = options["documentType"] as? String ?? "id"
+        // Absent keys leave the controller's own defaults alone.
+        let frameIntervalMs = options["frameIntervalMs"] as? Double
+        let requiredMatches = options["requiredMatches"] as? Int
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let cameraVC = MrzCameraViewController()
             cameraVC.documentType = documentType
+            if let frameIntervalMs = frameIntervalMs { cameraVC.frameIntervalMs = frameIntervalMs }
+            if let requiredMatches = requiredMatches { cameraVC.requiredMatches = max(1, requiredMatches) }
             cameraVC.delegate = self
             cameraVC.modalPresentationStyle = .fullScreen
             self.viewController.present(cameraVC, animated: true)

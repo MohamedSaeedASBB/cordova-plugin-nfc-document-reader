@@ -62,6 +62,25 @@ public class MrzCameraActivity extends AppCompatActivity {
 
     private MrzOcrProcessor.MrzParseResult detectedResult;
 
+    /**
+     * How the scanner paces itself, and how sure it has to be before accepting a read.
+     *
+     * It used to accept the first frame that parsed, having OCR'd every frame the camera produced.
+     * A single frame is a weak basis for a decision the rest of the flow depends on: an Algerian
+     * ID scanned that way returned a name whose "<<" separator had been read as the letter K,
+     * which surfaced later as a printed-versus-chip mismatch on a document that was genuine.
+     *
+     * So a read now has to repeat. requiredMatches frames must agree on the complete MRZ — every
+     * line, not just the three fields the chip key needs, since a misread anywhere is a misread —
+     * and frames are sampled at most every frameIntervalMs, which also lets autofocus settle
+     * between looks instead of recognising the same blur over and over.
+     */
+    private long frameIntervalMs = 250;
+    private int requiredMatches = 2;
+    private volatile long lastProcessedAt = 0;
+    private String candidateKey;
+    private int candidateMatches = 0;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -91,6 +110,9 @@ public class MrzCameraActivity extends AppCompatActivity {
 
         // Draw MRZ guide frame border
         setGuideFrameBorder(Color.WHITE);
+
+        frameIntervalMs = getIntent().getLongExtra("frameIntervalMs", frameIntervalMs);
+        requiredMatches = Math.max(1, getIntent().getIntExtra("requiredMatches", requiredMatches));
 
         // Set initial status based on document type
         String documentType = getIntent().getStringExtra("documentType");
@@ -190,10 +212,15 @@ public class MrzCameraActivity extends AppCompatActivity {
                     .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, imageProxy -> {
-                    if (mrzDetected) {
+                    long now = System.currentTimeMillis();
+                    if (mrzDetected || now - lastProcessedAt < frameIntervalMs) {
+                        // Dropped without recognising it: the camera delivers frames far faster
+                        // than a document changes, and OCR on every one spends battery and heat
+                        // taking repeated looks at the same blur.
                         imageProxy.close();
                         return;
                     }
+                    lastProcessedAt = now;
                     processImage(imageProxy);
                 });
 
@@ -224,6 +251,12 @@ public class MrzCameraActivity extends AppCompatActivity {
             .addOnSuccessListener(text -> {
                 MrzOcrProcessor.MrzParseResult result = mrzProcessor.processText(text);
                 if (result.isSuccess() && !mrzDetected) {
+                    if (!agreesWithCandidate(result)) {
+                        final int seen = candidateMatches;
+                        runOnUiThread(() -> statusText.setText(
+                                "Hold steady — confirming (" + seen + "/" + requiredMatches + ")"));
+                        return;
+                    }
                     mrzDetected = true;
                     detectedResult = result;
                     runOnUiThread(() -> showResult(result));
@@ -234,6 +267,27 @@ public class MrzCameraActivity extends AppCompatActivity {
             })
             .addOnFailureListener(e -> Log.e(TAG, "OCR error: " + e.getMessage()))
             .addOnCompleteListener(task -> imageProxy.close());
+    }
+
+    /**
+     * Counts how many consecutive reads agree. The whole MRZ is the key, not just the fields the
+     * chip needs: the name line carries no check digit, so a misread there is invisible until
+     * something downstream compares the print against the chip.
+     */
+    private boolean agreesWithCandidate(MrzOcrProcessor.MrzParseResult result) {
+        StringBuilder key = new StringBuilder();
+        for (String line : result.rawLines) {
+            key.append(line).append('\n');
+        }
+        String candidate = key.toString();
+
+        if (candidate.equals(candidateKey)) {
+            candidateMatches++;
+        } else {
+            candidateKey = candidate;
+            candidateMatches = 1;
+        }
+        return candidateMatches >= requiredMatches;
     }
 
     // ==================== UI State ====================
@@ -261,6 +315,8 @@ public class MrzCameraActivity extends AppCompatActivity {
     private void resetScan() {
         mrzDetected = false;
         detectedResult = null;
+        candidateKey = null;
+        candidateMatches = 0;
 
         // Reset guide frame to white
         setGuideFrameBorder(Color.WHITE);
