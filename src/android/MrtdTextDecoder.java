@@ -281,7 +281,15 @@ final class MrtdTextDecoder {
         }
     }
 
-    /** Arabic letters count for, control characters against. */
+    /**
+     * Arabic letters count for, control characters and strays against.
+     *
+     * The stray penalty is what separates two Arabic code pages that both "work". Decoding an
+     * Algerian ID's name with the wrong one produced "هظاهêر" where the right one gave "معامير":
+     * still mostly Arabic, but sprinkled with Latin-1 letters like ê and è that have no business
+     * in an Arabic field. Counting those against a candidate widened the margin between right and
+     * wrong on that card from 8 points to 16.
+     */
     private static int score(String text) {
         int score = 0;
         for (int i = 0; i < text.length(); i++) {
@@ -290,6 +298,7 @@ final class MrtdTextDecoder {
             else if (c == '�') score -= 5;
             else if (Character.isISOControl(c)) score -= 3;
             else if (c >= 0x20 && c < 0x7F) score += 1;          // printable ASCII, e.g. "<<"
+            else score -= 2;                                     // neither ASCII nor Arabic
         }
         return score;
     }
