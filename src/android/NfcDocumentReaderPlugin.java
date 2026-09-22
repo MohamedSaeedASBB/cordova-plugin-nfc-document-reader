@@ -208,6 +208,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         Activity activity = cordova.getActivity();
 
         Intent intent = new Intent(activity, MrzCameraActivity.class);
+        applyMrzScanOptions(intent, args.optJSONObject(0));
         if (args.length() > 0) {
             try {
                 JSONObject options = args.getJSONObject(0);
@@ -320,6 +321,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
         intent.putExtra("documentType", options.optString("documentType", "id"));
+        applyMrzScanOptions(intent, options);
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
@@ -377,6 +379,20 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         callback.sendPluginResult(pluginResult);
     }
 
+    /**
+     * Carries the scanner's pacing through to the camera screen. Absent keys leave the activity's
+     * own defaults alone, so a caller who does not care about pacing passes nothing.
+     */
+    private void applyMrzScanOptions(Intent intent, JSONObject options) {
+        if (options == null) return;
+        if (options.has("frameIntervalMs")) {
+            intent.putExtra("frameIntervalMs", options.optLong("frameIntervalMs", 250));
+        }
+        if (options.has("requiredMatches")) {
+            intent.putExtra("requiredMatches", options.optInt("requiredMatches", 2));
+        }
+    }
+
     // ==================== captureDocumentAndLiveness ====================
 
     /**
@@ -409,6 +425,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
         intent.putExtra("documentType", options.optString("documentType", "id"));
+        applyMrzScanOptions(intent, options);
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 

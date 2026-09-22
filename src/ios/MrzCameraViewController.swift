@@ -14,6 +14,16 @@ class MrzCameraViewController: UIViewController {
     weak var delegate: MrzCameraViewControllerDelegate?
     var documentType: String = "id"
 
+    /// How the scanner paces itself, and how sure it has to be before accepting a read.
+    /// Mirrors MrzCameraActivity: a single frame is a weak basis for a decision the rest of the
+    /// flow depends on, so requiredMatches frames must agree on the complete MRZ, sampled at most
+    /// every frameIntervalMs. See the note there for the misread that prompted it.
+    var frameIntervalMs: Double = 250
+    var requiredMatches: Int = 2
+    private var lastProcessedAt: TimeInterval = 0
+    private var candidateKey: String?
+    private var candidateMatches = 0
+
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private let mrzProcessor = MrzOcrProcessor()
@@ -286,6 +296,8 @@ class MrzCameraViewController: UIViewController {
         // Reset state
         mrzDetected = false
         detectedResult = nil
+        candidateKey = nil
+        candidateMatches = 0
 
         // Reset UI
         guideFrame.layer.borderColor = UIColor.white.cgColor
@@ -309,6 +321,13 @@ extension MrzCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate 
                        from connection: AVCaptureConnection) {
         guard !mrzDetected else { return }
 
+        // Dropped without recognising it: the camera delivers frames far faster than a document
+        // changes, and recognising every one spends battery and heat taking repeated looks at the
+        // same blur.
+        let now = Date().timeIntervalSince1970 * 1000
+        guard now - lastProcessedAt >= frameIntervalMs else { return }
+        lastProcessedAt = now
+
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let request = VNRecognizeTextRequest { [weak self] request, error in
@@ -323,6 +342,13 @@ extension MrzCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate 
             }
 
             if let result = self.mrzProcessor.processLines(lines) {
+                guard self.agreesWithCandidate(result) else {
+                    let seen = self.candidateMatches
+                    DispatchQueue.main.async {
+                        self.statusLabel.text = "Hold steady — confirming (\(seen)/\(self.requiredMatches))"
+                    }
+                    return
+                }
                 self.mrzDetected = true
                 self.detectedResult = result
                 DispatchQueue.main.async {
@@ -336,6 +362,20 @@ extension MrzCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate 
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         try? handler.perform([request])
+    }
+
+    /// Counts how many consecutive reads agree. The whole MRZ is the key, not just the fields the
+    /// chip needs: the name line carries no check digit, so a misread there is invisible until
+    /// something downstream compares the print against the chip.
+    private func agreesWithCandidate(_ result: MrzCameraResult) -> Bool {
+        let candidate = result.rawLines.joined(separator: "\n")
+        if candidate == candidateKey {
+            candidateMatches += 1
+        } else {
+            candidateKey = candidate
+            candidateMatches = 1
+        }
+        return candidateMatches >= requiredMatches
     }
 
     private func showResult(_ result: MrzCameraResult) {
