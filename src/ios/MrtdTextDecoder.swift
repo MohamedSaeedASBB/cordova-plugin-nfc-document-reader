@@ -114,7 +114,11 @@ enum MrtdTextDecoder {
         return best
     }
 
-    /// Arabic letters count for, replacement and control characters against.
+    /// Arabic letters count for, control characters and strays against.
+    ///
+    /// The stray penalty is what separates two Arabic code pages that both "work" — see the note
+    /// on MrtdTextDecoder.java's score(): the wrong one yields mostly-Arabic text sprinkled with
+    /// Latin-1 letters that have no business in an Arabic field.
     private static func score(_ text: String) -> Int {
         var score = 0
         for scalar in text.unicodeScalars {
@@ -123,7 +127,7 @@ enum MrtdTextDecoder {
             case 0xFFFD:          score -= 5
             case 0x00...0x1F, 0x7F: score -= 3
             case 0x20..<0x7F:     score += 1               // printable ASCII, e.g. "<<"
-            default: break
+            default: score -= 2                            // neither ASCII nor Arabic
             }
         }
         return score

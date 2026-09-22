@@ -828,8 +828,14 @@ DG11 returns those empty, which is a property of the card rather than a fault �
 so when the chip answered FILE NOT FOUND.
 
 `personalNumber` comes from the MRZ where the issuer puts it there, and from DG11 (`0x5F10`) where
-they do not: an Algerian ID leaves the MRZ field empty and carries it in DG11. The MRZ value wins
-when a card populates both, since that is the one the MRZ check digits cover.
+they do not: an Algerian ID leaves the MRZ field empty and carries an 18-digit national number in
+DG11. The MRZ value wins when a card populates both, since that is the one the MRZ check digits
+cover.
+
+**A DG11 field is whatever its issuer decided to put there.** On an Algerian ID the *permanent
+address* tag holds `["M", "ذكر", "O+"]` — sex in Latin, sex in Arabic, and blood group. It is not
+an address at all. Read `permanentAddressLines` and map the components against a real card of that
+issuer before naming them; the tag's ICAO title is not a promise about its contents.
 
 ### Non-Latin text and `textEncoding`
 
@@ -850,9 +856,12 @@ fields that actually failed are touched, so a conformant document is unaffected.
 | `null` | the document was conformant; text decoded as UTF-8 |
 | `"windows-1256"` / `"ISO-8859-6"` | text was recovered using this code page |
 
-**A non-null value means the encoding was inferred, not declared.** The candidate code pages agree
-on the core Arabic letters and differ elsewhere, so recovered names should be checked against the
-physical document before being trusted as a customer record. The encoding is chosen once per
+**A non-null value means the encoding was inferred, not declared** — but a document usually carries
+its own answer key. These fields are written `LATIN<<ARABIC`, so the transliteration sits beside the
+script it transliterates. On the Algerian ID tested, ISO-8859-6 decoded `MAAMIR<<معامير` and
+`EL-OUED<<الوادي` — each Arabic half matching its Latin half — while windows-1256 gave `هظاهêر` and
+`انèادê` against the same Latin. Comparing the two halves is the fastest way to confirm a recovered
+name without the physical card. The encoding is chosen once per
 document from all its damaged fields together, so fields cannot disagree with each other.
 
 Both platforms do this, but the failure they recover from looks different and is easy to misread.
