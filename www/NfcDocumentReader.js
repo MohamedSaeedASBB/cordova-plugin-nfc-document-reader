@@ -480,7 +480,7 @@ var NfcDocumentReader = {
      *     captureType: "document",
      *     documentType: "id" | "passport",
      *     sides: { front: { key, label, imageBase64, imageMimeType, imageBytes,
-     *                        imageWidth, imageHeight, jpegQuality, ocr? },
+     *                        imageWidth, imageHeight, jpegQuality, ocr?, documentCheck? },
      *              back: {...} },
      *     order: ["front", "back"],               // the sequence, without repeating the images
      *     capturedAt
@@ -497,6 +497,14 @@ var NfcDocumentReader = {
      * @param {Object} [options]
      * @param {string} [options.documentType="id"] - "id" captures front and back, "passport" front only
      * @param {string} [options.title] - Override the screen title
+     * @param {boolean} [options.verifyDocument=true] - Check each shot actually shows a document
+     *                 before it is kept, and say so on the review screen. See the note below.
+     * @param {boolean} [options.requireDocument=false] - Refuse to keep a shot that failed the
+     *                 check. Off by default: the check confirms a photograph, it cannot refute
+     *                 one, and the person holding the phone can see what a server cannot.
+     * @param {string[]} [options.expectedIdentifiers] - "label:value" pairs the photograph should
+     *                 contain, e.g. "documentNumber:C26077133". captureAndReadNFC supplies these
+     *                 from the chip automatically; pass them here if you already have them.
      * @param {number} [options.maxImageDimension=1200] - Long edge in pixels
      * @param {number} [options.maxImageBytes=256000] - Quality steps down until the JPEG fits
      * @param {number} [options.jpegQuality=80] - Starting quality, 1-100

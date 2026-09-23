@@ -354,6 +354,11 @@ carrying each base64 twice doubled the payload for no benefit.
 Each shot is reviewed on screen before it is kept — nothing downstream can tell the operator that
 a photo is too blurry to read while they can still retake it.
 
+**Each shot is also checked for evidence that it shows the document**, and the verdict appears on
+that review screen. See [Is this actually a document?](#is-this-actually-a-document) — this is not
+hypothetical: a payload from this plugin once carried a genuine chip read alongside a photograph of
+a mug and a photograph of a keyboard.
+
 **There is no OCR here, by design.** The chip already carries these fields — including the Arabic —
 covered by the issuer's signature and hash-verified. Reading them off a photograph instead would
 replace proven data with a camera-dependent guess. Use `readNFC` for the data and this for the
@@ -496,6 +501,62 @@ instead. Pass `ocr: false` for the image alone.
 
 The plugin does not judge whether a document *is* valid proof of address — it has no idea what
 counts in a given country. It returns the picture and, optionally, the text on it.
+
+### Is this actually a document?
+
+The capture screen photographed whatever was in front of the lens. A real payload from this plugin
+carried a chip read of a genuine Algerian ID with, attached to it, a photograph of a panda mug and
+a photograph of a keyboard — signed chip data and two pictures of an office desk, and nothing in
+the flow noticed.
+
+Each shot is now checked before it is kept, and each side carries the verdict:
+
+```json
+"documentCheck": {
+  "status": "confirmed",
+  "textLines": 8, "mrzLines": 0, "mrzFormat": null,
+  "matchedIdentifiers": ["documentNumber", "personalNumber"],
+  "reasons": []
+}
+```
+
+**What it looks for**, in order of strength:
+
+1. **Identifiers already known** from the MRZ scan or the chip — document number, personal number,
+   surname — found in the photograph's text. This says more than "a document": it says *this*
+   document, so it also rejects a photograph of a different genuine ID. `captureAndReadNFC` and
+   `captureDocumentAndLiveness` supply these automatically.
+2. **MRZ lines** — 30, 36 or 44 monospaced characters of `A-Z 0-9 <`. Nothing on a desk has that
+   shape, and it survives OCR at the resolution these photographs are taken at.
+
+**Two things it deliberately does not use**, both measured on real captures rather than assumed:
+
+- **Text volume.** The ID card produced 8–9 recognised lines. The keyboard produced 8.
+- **Face detection.** The card's MRZ side has no detectable face at the framing people actually
+  use — a card held in one hand fills perhaps a third of the frame, so its portrait is barely a
+  hundred pixels across — and a colleague sitting opposite supplies a face that has nothing to do
+  with the document.
+
+On the four real photographs above, the check classifies all four correctly: both card sides
+`confirmed`, the mug and the keyboard `notConfirmed`.
+
+**It is advisory by default.** `status` is reported and the review screen says so, but the shot can
+still be kept: the check confirms a photograph and cannot refute one, and a card at an angle in bad
+light can fail it while being perfectly genuine. Set `requireDocument: true` to make a failed check
+block the shot instead.
+
+**What it cannot do.** It cannot tell a card from a photograph of a card, or from one displayed on
+a screen. Those are presentation attacks on the document, and detecting them needs glare and moiré
+analysis and hologram behaviour under a flash — specialist capture this plugin does not have.
+`confirmed` means the right text was in the frame, not that the object was genuine.
+
+Without a chip read or MRZ scan behind it, a standalone `captureDocument` knows nothing about the
+document, so only a side showing an MRZ can be confirmed — the portrait side of an ID will report
+`notConfirmed` with `NO_MRZ_FOUND`. Pass `expectedIdentifiers` if you have them, or prefer
+`captureAndReadNFC`, where they come from the chip.
+
+Not run for `captureProofOfAddress`: a utility bill is not an identity document and would fail
+every honest capture.
 
 ### OCR and script coverage
 
