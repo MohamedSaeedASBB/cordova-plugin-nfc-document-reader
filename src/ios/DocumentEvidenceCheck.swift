@@ -1,6 +1,10 @@
 import Foundation
-import UIKit
+import CoreGraphics
 import Vision
+
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Decides whether a captured photograph actually shows the document. Mirrors
 /// DocumentEvidenceCheck.java, including what it deliberately does not use.
@@ -47,6 +51,7 @@ enum DocumentEvidenceCheck {
         }
     }
 
+    #if canImport(UIKit)
     /// Recognises the text, then decides. `expected` holds "label:value" identifiers.
     static func inspect(_ image: UIImage, expected: [String]) -> Result {
         guard let cgImage = image.cgImage else {
@@ -54,7 +59,13 @@ enum DocumentEvidenceCheck {
             result.reasons.append("CHECK_NOT_RUN")
             return result
         }
+        return inspect(cgImage: cgImage, expected: expected)
+    }
+    #endif
 
+    /// The recognition, on the image itself. Split from the UIKit entry point so the exact request
+    /// this ships with — not an approximation of it — can be run against real photographs on a Mac.
+    static func inspect(cgImage: CGImage, expected: [String]) -> Result {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -69,7 +80,7 @@ enum DocumentEvidenceCheck {
         }
 
         let lines = (request.results ?? []).compactMap {
-            ($0 as? VNRecognizedTextObservation)?.topCandidates(1).first?.string
+            $0.topCandidates(1).first?.string
         }
         return decide(lines: lines, mrzFormat: MrzOcrProcessor().processLines(lines)?.format,
                       expected: expected)

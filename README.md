@@ -27,6 +27,7 @@ Everything runs on the device. No document data, portrait or biometric template 
 | **iOS** | iPhone 7 or later for NFC; **iOS 15.5+**, set by ML Kit 7.0 (`plugin.xml` raises the deployment target) |
 | **iOS entitlement** | The App ID needs the **NFC Tag Reading** capability in the Apple Developer portal, and the provisioning profile regenerated. The entitlement in `plugin.xml` alone is not enough. |
 | **Cordova** | cordova >= 10, cordova-android >= 10, cordova-ios >= 6 |
+| **iOS Simulator** | **Not supported on Apple Silicon.** The ML Kit and NFCPassportReader pods set `EXCLUDED_ARCHS[sdk=iphonesimulator*] = arm64`, so an app using this plugin cannot link against an arm64 simulator — it fails with *could not find module 'NFCPassportReader' for target 'arm64-apple-ios-simulator'*. Build and test on a device. (Nothing here would work in a simulator anyway: no NFC, no usable camera.) |
 
 ## Installation
 
@@ -372,11 +373,7 @@ picture. An `ocr: true` passed here is ignored.
 | `jpegQuality` | `80` | Starting quality |
 | `title` | per type | Screen title |
 
-### `captureAndReadNFC(success, error, [options])`  *(Android only)*
-
-> **iOS:** not yet. This chains the MRZ scan, the chip read and the capture, and that orchestration
-> is only built on Android. Every individual step works on iOS — call `scanMRZ`, `readNFC` and
-> `captureDocument` in sequence and combine the results yourself.
+### `captureAndReadNFC(success, error, [options])`
 
 The whole document check in one call, in this order:
 
@@ -445,10 +442,7 @@ to this flow.
 > check; discarding it over a cancelled camera screen would be worse than returning it incomplete.
 > A failed chip read, by contrast, ends on the error callback.
 
-### `captureDocumentAndLiveness(success, error, [options])`  *(Android only)*
-
-> **iOS:** not yet, for the same reason as `captureAndReadNFC` — assemble it from `scanMRZ`,
-> `captureDocument` and `checkLiveness`.
+### `captureDocumentAndLiveness(success, error, [options])`
 
 MRZ, both sides of the card, then the holder's face — for a document with **no chip**, or as the
 fallback when a chip read is not possible.
