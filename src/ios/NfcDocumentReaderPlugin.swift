@@ -32,6 +32,12 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     /// this before deciding whether the result is its own to deliver.
     private var activeFlow: String?
     private static let flowCaptureAndReadNFC = "captureAndReadNFC"
+    private static let flowDocumentAndLiveness = "documentAndLiveness"
+
+    /// captureDocumentAndLiveness: its options, the payload being accumulated, and its callback.
+    private var docLivenessOptions: [String: Any]?
+    private var docLivenessPayload: [String: Any]?
+    private var docLivenessCallbackId: String?
 
     /// Options held while captureAndReadNFC's MRZ scan runs, before the chip read starts.
     private var pendingCombinedOptions: [String: Any]?
@@ -245,16 +251,94 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
     }
 
-    /// Still Android-only: this chains the MRZ scan, both photographs and a liveness check, and
-    /// that orchestration is not yet built here. The individual steps all work — scanMRZ,
-    /// captureDocument and checkLiveness — so the flow can be assembled from them meanwhile.
+    // MARK: - captureDocumentAndLiveness
+
+    /// MRZ, both sides of the card, then the holder's face — for a document with no chip to read,
+    /// or as the fallback when a chip read is not possible.
+    ///
+    /// Same order as the chip flow for the same reason: the MRZ first because it is the document's
+    /// own machine-readable summary, the photographs next while the card is in hand, the person
+    /// last. What it cannot do is verify anything. Nothing here is signed by an issuer and nothing
+    /// is compared against a chip, so this collects evidence for a decision made elsewhere rather
+    /// than reaching one. verification.documentAuthentic is "unknown" in every result.
     @objc(captureDocumentAndLiveness:)
     func captureDocumentAndLiveness(command: CDVInvokedUrlCommand) {
-        let result = CDVPluginResult(
-            status: .error,
-            messageAs: "captureDocumentAndLiveness is not available on iOS yet. Call scanMRZ, "
-                     + "captureDocument and checkLiveness in sequence instead — each works on iOS.")
-        commandDelegate.send(result, callbackId: command.callbackId)
+        let options = command.arguments.first as? [String: Any] ?? [:]
+
+        docLivenessPayload = [
+            "captureType": Self.flowDocumentAndLiveness,
+            "documentType": options["documentType"] as? String ?? "id"
+        ]
+        activeFlow = Self.flowDocumentAndLiveness
+        docLivenessOptions = options
+        docLivenessCallbackId = command.callbackId
+        mrzScanCallbackId = command.callbackId
+
+        presentMrzScanner(options: options)
+    }
+
+    /// Step two: photograph the card.
+    private func docLivenessCaptureStep() {
+        let options = docLivenessOptions ?? [:]
+        let documentType = options["documentType"] as? String ?? "id"
+        let isPassport = documentType.lowercased() == "passport"
+        // No chip on this path, but the MRZ scan already read the document number.
+        let identifiers = Self.identifiers(from: docLivenessPayload?["mrz"] as? [String: Any] ?? [:])
+
+        presentCapture(callbackId: docLivenessCallbackId, options: options) { controller in
+            controller.captureType = "document"
+            controller.documentType = documentType
+            controller.title = isPassport ? "Capture passport" : "Capture ID card"
+            controller.steps = DocumentCaptureViewController.steps(forDocumentType: documentType)
+            controller.runOcr = false
+            controller.expectedIdentifiers = identifiers
+        }
+    }
+
+    /// Step three: the holder.
+    private func docLivenessLivenessStep() {
+        let livenessOptions = docLivenessOptions?["liveness"] as? [String: Any] ?? [:]
+        let livenessVC = LivenessCameraViewController()
+        livenessVC.options = LivenessOptions.from(livenessOptions)
+        livenessVC.delegate = self
+        livenessVC.modalPresentationStyle = .fullScreen
+        viewController.present(livenessVC, animated: true)
+    }
+
+    /// Ends the flow, delivering whatever was collected. A step the user abandoned is named in
+    /// cancelledAt rather than thrown away with everything before it: an MRZ scan and two
+    /// photographs are worth returning even when the selfie was refused, and the caller can see
+    /// exactly how far the flow got.
+    private func finishDocLiveness(cancelledAt: String?, errorMessage: String?) {
+        let callbackId = docLivenessCallbackId
+        let payload = docLivenessPayload
+
+        activeFlow = nil
+        docLivenessCallbackId = nil
+        docLivenessOptions = nil
+        docLivenessPayload = nil
+        mrzScanCallbackId = nil
+        livenessCallbackId = nil
+        captureCallbackId = nil
+
+        guard let callbackId = callbackId else { return }
+
+        // Nothing collected at all: this is a failure, not a partial result.
+        guard var payload = payload, payload["mrz"] != nil else {
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR,
+                                         messageAs: errorMessage ?? "Capture cancelled.")
+            commandDelegate.send(result, callbackId: callbackId)
+            return
+        }
+
+        payload["completed"] = cancelledAt == nil
+        if let cancelledAt = cancelledAt { payload["cancelledAt"] = cancelledAt }
+        if let errorMessage = errorMessage { payload["cancelReason"] = errorMessage }
+        payload["capturedAt"] = Int(Date().timeIntervalSince1970 * 1000)
+
+        let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: payload)
+        result?.keepCallback = false
+        commandDelegate.send(result, callbackId: callbackId)
     }
 
     // MARK: - captureAndReadNFC
@@ -671,6 +755,14 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
             "rawMrzLines": result.rawLines
         ]
 
+        if activeFlow == Self.flowDocumentAndLiveness {
+            docLivenessPayload?["mrz"] = response
+            controller.dismiss(animated: true) { [weak self] in
+                self?.docLivenessCaptureStep()
+            }
+            return
+        }
+
         if activeFlow == Self.flowCaptureAndReadNFC {
             // Phase one of the combined flow: the scan was the means, not the answer. The NFC
             // sheet is presented from the camera's dismissal completion, not over it.
@@ -688,9 +780,15 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
     func mrzCameraViewControllerDidCancel(_ controller: MrzCameraViewController) {
         controller.dismiss(animated: true)
 
-        activeFlow = nil
         pendingCombinedOptions = nil
         captureAfterRead = false
+
+        if activeFlow == Self.flowDocumentAndLiveness {
+            // Nothing collected yet, so this ends as an error rather than a partial result.
+            finishDocLiveness(cancelledAt: "mrz", errorMessage: "MRZ scan cancelled")
+            return
+        }
+        activeFlow = nil
 
         guard let callbackId = mrzScanCallbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "MRZ scan cancelled")
@@ -704,9 +802,18 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
 extension NfcDocumentReaderPlugin: DocumentCaptureViewControllerDelegate {
 
     func documentCapture(_ controller: DocumentCaptureViewController, didFinish result: [String: Any]) {
-        controller.dismiss(animated: true)
         let callbackId = captureCallbackId
         captureCallbackId = nil
+
+        if activeFlow == Self.flowDocumentAndLiveness {
+            docLivenessPayload?["capture"] = result
+            controller.dismiss(animated: true) { [weak self] in
+                self?.docLivenessLivenessStep()
+            }
+            return
+        }
+
+        controller.dismiss(animated: true)
 
         if var payload = takePayloadAwaitingCapture() {
             payload.0["capture"] = result
@@ -723,6 +830,13 @@ extension NfcDocumentReaderPlugin: DocumentCaptureViewControllerDelegate {
         controller.dismiss(animated: true)
         let callbackId = captureCallbackId
         captureCallbackId = nil
+
+        if activeFlow == Self.flowDocumentAndLiveness {
+            // Stop here rather than pushing a selfie camera at someone who just backed out. The
+            // MRZ is still returned.
+            finishDocLiveness(cancelledAt: "capture", errorMessage: "Document capture was cancelled.")
+            return
+        }
 
         // A cancelled camera must not discard a chip read that already cost the customer a tap and
         // possibly a liveness check. The payload goes back without the photographs, saying so.
@@ -755,6 +869,12 @@ extension NfcDocumentReaderPlugin: LivenessCameraViewControllerDelegate {
                                       didComplete result: [String: Any]) {
         controller.dismiss(animated: true)
 
+        if activeFlow == Self.flowDocumentAndLiveness {
+            docLivenessPayload?["liveness"] = result
+            finishDocLiveness(cancelledAt: nil, errorMessage: nil)
+            return
+        }
+
         // Chip-read flow: fold the liveness result into the document result and compare.
         if pendingDocumentResult != nil {
             completeChipReadWithLiveness(result)
@@ -771,6 +891,12 @@ extension NfcDocumentReaderPlugin: LivenessCameraViewControllerDelegate {
     func livenessCameraViewController(_ controller: LivenessCameraViewController,
                                       didFailWith code: String, message: String) {
         controller.dismiss(animated: true)
+
+        if activeFlow == Self.flowDocumentAndLiveness {
+            // The MRZ and the photographs are still worth returning.
+            finishDocLiveness(cancelledAt: "liveness", errorMessage: message)
+            return
+        }
 
         if pendingDocumentResult != nil {
             failChipReadLiveness(message)
