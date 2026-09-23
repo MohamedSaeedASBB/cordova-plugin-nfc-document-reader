@@ -42,8 +42,7 @@
                       android:screenOrientation="portrait" />
         </config-file>
 
-                     Cordova fails plugin install if a resource-file src does not exist, which is why
-             this is commented rather than live. See src/models/README.md.
+        <!-- The face-match model. See src/models/README.md and PROVENANCE.md. -->
         <resource-file src="src/models/mobilefacenet.tflite"
                        target="assets/mobilefacenet.tflite" />
 
@@ -155,8 +154,7 @@
         <resource-file src="src/csca/csca_master_list.pem" />
         -->
 
-                     Cordova fails plugin install if a resource-file src does not exist, which is why
-             this is commented rather than live. See src/models/README.md.
+        <!-- The face-match model. See src/models/README.md and PROVENANCE.md. -->
         <resource-file src="src/models/mobilefacenet.tflite" />
 
         <!--
