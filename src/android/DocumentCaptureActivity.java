@@ -97,9 +97,11 @@ public class DocumentCaptureActivity extends AppCompatActivity {
     private TextRecognizer textRecognizer;
 
     private DocumentCaptureOptions options;
+    private MrzOcrProcessor mrzProcessor;
     private final List<JSONObject> captured = new ArrayList<>();
     private int stepIndex = 0;
     private Bitmap pendingBitmap;
+    private DocumentEvidenceCheck.Result pendingCheck;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,8 +130,11 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         setGuideFrameBorder();
 
         cameraExecutor = Executors.newSingleThreadExecutor();
-        if (options.runOcr) {
+        if (options.runOcr || options.verifyDocument) {
             textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+        }
+        if (options.verifyDocument) {
+            mrzProcessor = new MrzOcrProcessor();
         }
 
         captureButton.setOnClickListener(v -> takePhoto());
@@ -206,14 +211,29 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                 }
 
                 final Bitmap shot = bitmap;
-                runOnUiThread(() -> {
-                    captureButton.setEnabled(true);
-                    if (shot == null) {
+                if (shot == null) {
+                    runOnUiThread(() -> {
+                        captureButton.setEnabled(true);
                         Toast.makeText(DocumentCaptureActivity.this,
                                 "That photo could not be read. Please try again.",
                                 Toast.LENGTH_SHORT).show();
-                        return;
-                    }
+                    });
+                    return;
+                }
+
+                // Checked before the review screen appears, and on the full-resolution frame
+                // rather than the compressed copy, so the verdict is in front of the person while
+                // they can still retake it.
+                if (options.verifyDocument) {
+                    runOnUiThread(() -> hintText.setText("Checking the photo..."));
+                    pendingCheck = DocumentEvidenceCheck.inspect(
+                            shot, options.expectedIdentifiers, textRecognizer, mrzProcessor);
+                } else {
+                    pendingCheck = null;
+                }
+
+                runOnUiThread(() -> {
+                    captureButton.setEnabled(true);
                     pendingBitmap = shot;
                     showReview(shot);
                 });
@@ -266,6 +286,8 @@ public class DocumentCaptureActivity extends AppCompatActivity {
             pendingBitmap.recycle();
             pendingBitmap = null;
         }
+        pendingCheck = null;
+        useButton.setVisibility(View.VISIBLE);
         reviewImage.setVisibility(View.GONE);
         reviewImage.setImageDrawable(null);
         cameraPreview.setVisibility(View.VISIBLE);
@@ -281,6 +303,20 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         captureGuideFrame.setVisibility(View.GONE);
         captureButton.setVisibility(View.GONE);
         reviewButtons.setVisibility(View.VISIBLE);
+
+        boolean confirmed = pendingCheck == null || pendingCheck.isConfirmed();
+        if (pendingCheck == null) {
+            hintText.setText("Check the photo is sharp and the whole document is visible");
+        } else if (confirmed) {
+            hintText.setText("Document recognised — check it is sharp and complete");
+        } else {
+            hintText.setText(options.requireDocument
+                    ? "This does not look like the document. Please retake it."
+                    : "We could not recognise the document in this photo. Retake it, or use it "
+                      + "anyway if it is correct.");
+        }
+        // In strict mode a shot that failed cannot be kept; the only way on is another attempt.
+        useButton.setVisibility(!confirmed && options.requireDocument ? View.GONE : View.VISIBLE);
     }
 
     private void keepPhoto() {
@@ -288,7 +324,9 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         useButton.setEnabled(false);
 
         final Bitmap bitmap = pendingBitmap;
+        final DocumentEvidenceCheck.Result check = pendingCheck;
         pendingBitmap = null;
+        pendingCheck = null;
         final DocumentCaptureOptions.Step step = options.steps.get(stepIndex);
 
         cameraExecutor.execute(() -> {
@@ -306,6 +344,9 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                 entry.put("jpegQuality", compressed.quality);
                 if (options.runOcr) {
                     entry.put("ocr", runOcr(bitmap));
+                }
+                if (check != null) {
+                    entry.put("documentCheck", check.toJson());
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Could not prepare the captured image: " + e.getMessage(), e);

@@ -79,6 +79,7 @@
         <source-file src="src/android/DocumentCaptureActivity.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/DocumentCaptureOptions.java" target-dir="src/com/nfcdocumentreader" />
         <source-file src="src/android/MrzChipComparison.java" target-dir="src/com/nfcdocumentreader" />
+        <source-file src="src/android/DocumentEvidenceCheck.java" target-dir="src/com/nfcdocumentreader" />
 
         <!-- Dependencies -->
         <framework src="org.jmrtd:jmrtd:0.7.42" />
@@ -144,6 +145,8 @@
         <source-file src="src/ios/FaceComparison.swift" />
         <source-file src="src/ios/FaceMatcher.swift" />
         <source-file src="src/ios/MrtdTextDecoder.swift" />
+        <source-file src="src/ios/DocumentEvidenceCheck.swift" />
+        <source-file src="src/ios/DocumentCaptureViewController.swift" />
 
         <!-- CSCA trust store: uncomment once src/csca/csca_master_list.pem is present.
              Without it, passive authentication reports "notVerified" (NO_TRUST_ANCHORS) because

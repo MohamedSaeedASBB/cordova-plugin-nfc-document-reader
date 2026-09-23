@@ -247,6 +247,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         + " signed. OCR is available on captureProofOfAddress.");
             }
             options.put("ocr", false);
+            // Without a chip read or an MRZ scan behind it, this call knows nothing about the
+            // document, so only an MRZ in the frame can confirm a side. A caller that already has
+            // identifiers can pass expectedIdentifiers itself.
             if (!options.has("title")) {
                 options.put("title", "passport".equalsIgnoreCase(documentType)
                         ? "Capture passport" : "Capture ID card");
@@ -353,6 +356,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             options.put("ocr", false);          // the chip supplies these fields, signed
             options.put("steps", DocumentCaptureOptions.stepsForDocumentType(captureType));
             options.put("title", isPassport ? "Capture passport" : "Capture ID card");
+            options.put("expectedIdentifiers", identifiersFrom(payload));
         } catch (JSONException e) {
             // Cannot photograph, but the chip read succeeded — deliver that rather than nothing.
             Log.w(TAG, "Could not build capture options after the read: " + e.getMessage());
@@ -363,6 +367,32 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         payloadAwaitingCapture = payload;
         payloadAwaitingCaptureCallback = callback;
         launchCapture(options, callback);
+    }
+
+    /**
+     * The identifiers a photograph of this document should contain, drawn from what has already
+     * been read. Printed on the card in Latin characters and large enough to survive OCR, they are
+     * what lets the capture screen tell the document from whatever else is on the desk — and tell
+     * this document from a different one.
+     *
+     * Labelled rather than bare so the result can report which matched without repeating holder
+     * data that is already elsewhere in the payload.
+     */
+    private JSONArray identifiersFrom(JSONObject source) {
+        JSONArray identifiers = new JSONArray();
+        if (source == null) return identifiers;
+        String[][] candidates = {
+            { "documentNumber", source.optString("documentNumber", "") },
+            { "personalNumber", source.optString("personalNumber", "") },
+            { "surname", source.optString("primaryIdentifier", "") },
+            { "givenNames", source.optString("secondaryIdentifier", "") },
+        };
+        for (String[] candidate : candidates) {
+            if (candidate[1] != null && candidate[1].length() >= 5) {
+                identifiers.put(candidate[0] + ":" + candidate[1]);
+            }
+        }
+        return identifiers;
     }
 
     /** One exit for the combined flow, so the payload shape is the same however it got here. */
@@ -440,6 +470,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
             options.put("title", "passport".equalsIgnoreCase(documentType)
                     ? "Capture passport" : "Capture ID card");
+            // No chip on this path, but the MRZ scan already read the document number.
+            options.put("expectedIdentifiers",
+                    identifiersFrom(docLivenessPayload.optJSONObject("mrz")));
             for (String key : new String[] { "maxImageDimension", "maxImageBytes", "jpegQuality" }) {
                 if (docLivenessOptions.has(key)) options.put(key, docLivenessOptions.opt(key));
             }

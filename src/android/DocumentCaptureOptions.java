@@ -32,6 +32,25 @@ class DocumentCaptureOptions {
     boolean runOcr = false;
 
     /**
+     * Whether each shot is checked for evidence that it actually shows the document, and whether
+     * failing that check blocks the shot from being kept.
+     *
+     * Advisory by default. The check confirms a photograph, it cannot refute one: a card held at
+     * an angle in poor light can fail it while being perfectly genuine, and the person holding the
+     * phone can see that when a server cannot. requireDocument hands the decision to the plugin
+     * instead, for flows that would rather lose a good capture than keep a bad one.
+     */
+    boolean verifyDocument = true;
+    boolean requireDocument = false;
+
+    /**
+     * Identifiers already known from the MRZ scan or the chip, as "label:value". Their presence in
+     * the photograph is the strongest evidence available — it says not merely "this is a document"
+     * but "this is the document just read".
+     */
+    List<String> expectedIdentifiers = new ArrayList<>();
+
+    /**
      * Defaults for photographing an identity document, where the picture is a record rather than
      * a source of data — the chip already carries the fields, signed. A card fills the frame and
      * its print is large relative to it, so 1200px stays legible to a person.
@@ -69,6 +88,19 @@ class DocumentCaptureOptions {
         try {
             JSONObject root = new JSONObject(json);
             options.captureType = root.optString("captureType", options.captureType);
+            // A proof of address is not an identity document, so the evidence check — which looks
+            // for an MRZ or a known identifier — would fail every honest capture. Off unless asked.
+            options.verifyDocument = root.optBoolean("verifyDocument",
+                    "document".equals(options.captureType));
+            options.requireDocument = root.optBoolean("requireDocument", false);
+
+            JSONArray identifiers = root.optJSONArray("expectedIdentifiers");
+            if (identifiers != null) {
+                for (int i = 0; i < identifiers.length(); i++) {
+                    String value = identifiers.optString(i, null);
+                    if (value != null && !value.isEmpty()) options.expectedIdentifiers.add(value);
+                }
+            }
             options.title = root.optString("title", options.title);
             options.runOcr = root.optBoolean("ocr", false);
             options.maxImageDimension = root.optInt("maxImageDimension", options.maxImageDimension);
