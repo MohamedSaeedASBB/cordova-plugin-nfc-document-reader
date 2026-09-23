@@ -319,7 +319,7 @@ Options: `challenges[]`, `challengeCount` (2), `overallTimeoutMs` (45000), `perC
 
 Omit `challenges` so the sequence is random — a fixed order is replayable.
 
-### `captureDocument(success, error, [options])`  *(Android only)*
+### `captureDocument(success, error, [options])`
 
 Photographs the document itself. **An ID card is captured front and back; a passport is captured
 once, at the photo page** — the step list follows from `documentType`, so the caller does not
@@ -373,6 +373,10 @@ picture. An `ocr: true` passed here is ignored.
 | `title` | per type | Screen title |
 
 ### `captureAndReadNFC(success, error, [options])`  *(Android only)*
+
+> **iOS:** not yet. This chains the MRZ scan, the chip read and the capture, and that orchestration
+> is only built on Android. Every individual step works on iOS — call `scanMRZ`, `readNFC` and
+> `captureDocument` in sequence and combine the results yourself.
 
 The whole document check in one call, in this order:
 
@@ -443,6 +447,9 @@ to this flow.
 
 ### `captureDocumentAndLiveness(success, error, [options])`  *(Android only)*
 
+> **iOS:** not yet, for the same reason as `captureAndReadNFC` — assemble it from `scanMRZ`,
+> `captureDocument` and `checkLiveness`.
+
 MRZ, both sides of the card, then the holder's face — for a document with **no chip**, or as the
 fallback when a chip read is not possible.
 
@@ -476,7 +483,7 @@ collected before it: an MRZ scan and two photographs are worth keeping even when
 refused, and `completed` is `false`. Only a cancelled MRZ scan — where nothing was collected at
 all — reaches the error callback.
 
-### `captureProofOfAddress(success, error, [options])`  *(Android only)*
+### `captureProofOfAddress(success, error, [options])`
 
 One page of whatever the customer brought — a utility bill, a bank statement, a tenancy contract.
 Same options minus `documentType`, and the single entry is keyed `"document"`.

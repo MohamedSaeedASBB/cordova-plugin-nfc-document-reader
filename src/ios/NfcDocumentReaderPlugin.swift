@@ -24,6 +24,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var pendingFaceMatchConfig: [String: Any]?
     private var pendingPassiveAuthConfig: [String: Any]?
     private var pendingIncludeRawDataGroups = false
+    private var captureCallbackId: String?
     private let comparisonQueue = DispatchQueue(label: "liveness.comparison.queue")
 
     // MARK: - Plugin Lifecycle
@@ -171,30 +172,56 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     // MARK: - Document capture
 
-    /// Not yet implemented on iOS. Fails loudly rather than silently: an app calling this on an
-    /// iPhone must know it got nothing, not receive an empty result it might store as a capture.
-    ///
-    /// When it is built, the OCR side is already favourable here — Apple's Vision framework runs
-    /// entirely on-device with no extra dependency and, unlike ML Kit on Android, recognises
-    /// Arabic on recent iOS versions.
+    /// Photographs the card: front and back for an ID, the photo page alone for a passport.
+    /// Which sides exist follows from the document type, as on Android.
     @objc(captureDocument:)
     func captureDocument(command: CDVInvokedUrlCommand) {
-        rejectUnimplementedCapture(command)
+        let options = command.arguments.first as? [String: Any] ?? [:]
+        let documentType = options["documentType"] as? String ?? "id"
+        let isPassport = documentType.lowercased() == "passport"
+
+        presentCapture(callbackId: command.callbackId, options: options) { controller in
+            controller.captureType = "document"
+            controller.documentType = documentType
+            controller.title = options["title"] as? String
+                ?? (isPassport ? "Capture passport" : "Capture ID card")
+            controller.steps = DocumentCaptureViewController.steps(forDocumentType: documentType)
+            // No OCR: the chip carries these fields signed, so the photograph is for the record.
+            controller.runOcr = false
+        }
     }
 
+    /// One page of whatever the customer brought. OCR on by default: reading the page is the
+    /// reason this capture exists, and there is no chip behind a utility bill.
     @objc(captureProofOfAddress:)
     func captureProofOfAddress(command: CDVInvokedUrlCommand) {
-        rejectUnimplementedCapture(command)
+        let options = command.arguments.first as? [String: Any] ?? [:]
+
+        presentCapture(callbackId: command.callbackId, options: options) { controller in
+            controller.captureType = "proofOfAddress"
+            controller.title = options["title"] as? String ?? "Proof of address"
+            controller.steps = [DocumentCaptureStep(
+                key: "document", label: "Proof of address",
+                hint: "Photograph the whole page, including the name and address")]
+            controller.runOcr = (options["ocr"] as? Bool) ?? true
+            // A bill is not an identity document; the evidence check would fail every honest one.
+            controller.verifyDocument = (options["verifyDocument"] as? Bool) ?? false
+            // The picture is the data here, so it is allowed more room than a card.
+            controller.imageOptions.maxDimension = options["maxImageDimension"] as? Int ?? 1800
+            controller.imageOptions.maxBytes = options["maxImageBytes"] as? Int ?? 600 * 1024
+            controller.imageOptions.initialQuality =
+                CGFloat(options["jpegQuality"] as? Int ?? 88) / 100.0
+        }
     }
 
-    /// Needs the camera capture that iOS does not have yet.
+    /// Still Android-only: these chain the MRZ scan, the chip read and the capture, and that
+    /// orchestration is not yet built here. The individual steps all work — scanMRZ, readNFC,
+    /// checkLiveness and captureDocument — so a flow can be assembled from them meanwhile.
     @objc(captureDocumentAndLiveness:)
     func captureDocumentAndLiveness(command: CDVInvokedUrlCommand) {
         rejectUnimplementedCapture(command)
     }
 
-    /// The chip half works on iOS; the camera half does not, and half a combined call is not a
-    /// result. Callers who need the chip read alone on iOS should use readNFC.
     @objc(captureAndReadNFC:)
     func captureAndReadNFC(command: CDVInvokedUrlCommand) {
         rejectUnimplementedCapture(command)
@@ -203,9 +230,32 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private func rejectUnimplementedCapture(_ command: CDVInvokedUrlCommand) {
         let result = CDVPluginResult(
             status: .error,
-            messageAs: "Document capture is not available on iOS yet. Use an Android device, or "
-                     + "capture the document with the platform camera and pass the image in.")
+            messageAs: "This combined flow is not available on iOS yet. Call scanMRZ, readNFC and "
+                     + "captureDocument in sequence instead — each works on iOS.")
         commandDelegate.send(result, callbackId: command.callbackId)
+    }
+
+    /// Shared presentation for the capture screens, so the options that mean the same thing are
+    /// read the same way whichever capture asked for them.
+    private func presentCapture(callbackId: String?, options: [String: Any],
+                                configure: @escaping (DocumentCaptureViewController) -> Void) {
+        captureCallbackId = callbackId
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let controller = DocumentCaptureViewController()
+            controller.imageOptions.maxDimension = options["maxImageDimension"] as? Int ?? 1200
+            controller.imageOptions.maxBytes = options["maxImageBytes"] as? Int ?? 250 * 1024
+            controller.imageOptions.initialQuality =
+                CGFloat(options["jpegQuality"] as? Int ?? 80) / 100.0
+            controller.verifyDocument = (options["verifyDocument"] as? Bool) ?? true
+            controller.requireDocument = (options["requireDocument"] as? Bool) ?? false
+            controller.expectedIdentifiers = options["expectedIdentifiers"] as? [String] ?? []
+            configure(controller)
+            controller.delegate = self
+            controller.modalPresentationStyle = .fullScreen
+            self.viewController.present(controller, animated: true)
+        }
     }
 
     @objc(readNFC:)
@@ -457,6 +507,26 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
 }
 
 // MARK: - LivenessCameraViewControllerDelegate
+
+extension NfcDocumentReaderPlugin: DocumentCaptureViewControllerDelegate {
+
+    func documentCapture(_ controller: DocumentCaptureViewController, didFinish result: [String: Any]) {
+        controller.dismiss(animated: true)
+        guard let callbackId = captureCallbackId else { return }
+        captureCallbackId = nil
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
+        commandDelegate.send(pluginResult, callbackId: callbackId)
+    }
+
+    func documentCaptureDidCancel(_ controller: DocumentCaptureViewController) {
+        controller.dismiss(animated: true)
+        guard let callbackId = captureCallbackId else { return }
+        captureCallbackId = nil
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR,
+                                           messageAs: "Document capture was cancelled.")
+        commandDelegate.send(pluginResult, callbackId: callbackId)
+    }
+}
 
 extension NfcDocumentReaderPlugin: LivenessCameraViewControllerDelegate {
 
