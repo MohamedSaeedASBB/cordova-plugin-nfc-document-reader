@@ -467,7 +467,7 @@ enum DocumentOcr {
                     "error": "OCR_FAILED"]
         }
         let lines = (request.results ?? []).compactMap {
-            ($0 as? VNRecognizedTextObservation)?.topCandidates(1).first?.string
+            $0.topCandidates(1).first?.string
         }
         let languages = (try? request.supportedRecognitionLanguages()) ?? []
         return [

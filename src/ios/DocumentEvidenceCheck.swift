@@ -69,7 +69,7 @@ enum DocumentEvidenceCheck {
         }
 
         let lines = (request.results ?? []).compactMap {
-            ($0 as? VNRecognizedTextObservation)?.topCandidates(1).first?.string
+            $0.topCandidates(1).first?.string
         }
         return decide(lines: lines, mrzFormat: MrzOcrProcessor().processLines(lines)?.format,
                       expected: expected)

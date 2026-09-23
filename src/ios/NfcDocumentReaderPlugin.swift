@@ -27,6 +27,22 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private var captureCallbackId: String?
     private let comparisonQueue = DispatchQueue(label: "liveness.comparison.queue")
 
+    /// The multi-step flow currently running, or nil. The MRZ, chip and capture screens all
+    /// report through the same delegates whichever flow asked for them, so each handler checks
+    /// this before deciding whether the result is its own to deliver.
+    private var activeFlow: String?
+    private static let flowCaptureAndReadNFC = "captureAndReadNFC"
+
+    /// Options held while captureAndReadNFC's MRZ scan runs, before the chip read starts.
+    private var pendingCombinedOptions: [String: Any]?
+    /// True when the chip read now running should photograph the card before returning.
+    private var captureAfterRead = false
+    /// The finished chip payload, waiting for the photographs to be taken and folded in.
+    private var payloadAwaitingCapture: [String: Any]?
+    private var payloadAwaitingCaptureCallbackId: String?
+    /// The MRZ as scanned, kept so the print can be compared against what the chip says.
+    private var pendingRawMrzInfo = ""
+
     // MARK: - Plugin Lifecycle
 
     override func pluginInitialize() {
@@ -60,11 +76,15 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     @objc(scanMRZ:)
     func scanMRZ(command: CDVInvokedUrlCommand) {
+        activeFlow = nil
         mrzScanCallbackId = command.callbackId
+        presentMrzScanner(options: command.arguments.first as? [String: Any] ?? [:])
+    }
 
-        let options = command.arguments.first as? [String: Any] ?? [:]
+    /// Shared by scanMRZ and by the combined flow's first phase, so the scanner is paced the same
+    /// way whichever asked for it. Absent keys leave the controller's own defaults alone.
+    private func presentMrzScanner(options: [String: Any]) {
         let documentType = options["documentType"] as? String ?? "id"
-        // Absent keys leave the controller's own defaults alone.
         let frameIntervalMs = options["frameIntervalMs"] as? Double
         let requiredMatches = options["requiredMatches"] as? Int
 
@@ -143,9 +163,19 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
             documentResult["faceComparison"] = outcome.json
 
-            let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: documentResult)
-            pluginResult?.keepCallback = false
-            self.commandDelegate.send(pluginResult, callbackId: callbackId)
+            if self.captureAfterRead {
+                // Same tail as the non-liveness path: the card is photographed last, once the chip
+                // has been read and checked against the print.
+                self.captureAfterRead = false
+                let finished = documentResult
+                DispatchQueue.main.async {
+                    self.launchCaptureAfterRead(finished, callbackId: callbackId)
+                }
+                return
+            }
+
+            self.sendFinalPayload(callbackId: callbackId, payload: documentResult,
+                                  captureIssue: nil)
         }
     }
 
@@ -153,6 +183,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         pendingDocumentResult = nil
         pendingLivenessOptions = nil
         pendingFaceMatchConfig = nil
+        captureAfterRead = false
 
         guard let callbackId = nfcCallbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: message)
@@ -214,25 +245,110 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
     }
 
-    /// Still Android-only: these chain the MRZ scan, the chip read and the capture, and that
-    /// orchestration is not yet built here. The individual steps all work — scanMRZ, readNFC,
-    /// checkLiveness and captureDocument — so a flow can be assembled from them meanwhile.
+    /// Still Android-only: this chains the MRZ scan, both photographs and a liveness check, and
+    /// that orchestration is not yet built here. The individual steps all work — scanMRZ,
+    /// captureDocument and checkLiveness — so the flow can be assembled from them meanwhile.
     @objc(captureDocumentAndLiveness:)
     func captureDocumentAndLiveness(command: CDVInvokedUrlCommand) {
-        rejectUnimplementedCapture(command)
-    }
-
-    @objc(captureAndReadNFC:)
-    func captureAndReadNFC(command: CDVInvokedUrlCommand) {
-        rejectUnimplementedCapture(command)
-    }
-
-    private func rejectUnimplementedCapture(_ command: CDVInvokedUrlCommand) {
         let result = CDVPluginResult(
             status: .error,
-            messageAs: "This combined flow is not available on iOS yet. Call scanMRZ, readNFC and "
-                     + "captureDocument in sequence instead — each works on iOS.")
+            messageAs: "captureDocumentAndLiveness is not available on iOS yet. Call scanMRZ, "
+                     + "captureDocument and checkLiveness in sequence instead — each works on iOS.")
         commandDelegate.send(result, callbackId: command.callbackId)
+    }
+
+    // MARK: - captureAndReadNFC
+
+    /// Scan the MRZ, read the chip, check the two agree, then photograph the card — on one
+    /// callback.
+    ///
+    /// The order is the point. The MRZ has to be read first because it derives the chip access
+    /// key, and the chip has to be read before the photographs so that the comparison between what
+    /// is printed and what is stored happens while the customer is still at the counter with the
+    /// document in their hand. Photographing first would produce images of a card nobody had yet
+    /// established was genuine.
+    ///
+    /// If the photographs are abandoned the chip result is still delivered, with capture absent
+    /// and captureCancelled true: a completed read cost the customer a tap and possibly a liveness
+    /// check, and throwing it away because of a cancelled camera screen would be worse than
+    /// returning it incomplete.
+    @objc(captureAndReadNFC:)
+    func captureAndReadNFC(command: CDVInvokedUrlCommand) {
+        guard #available(iOS 13.0, *) else {
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR,
+                                         messageAs: "NFC requires iOS 13 or later")
+            commandDelegate.send(result, callbackId: command.callbackId)
+            return
+        }
+
+        let options = command.arguments.first as? [String: Any] ?? [:]
+        pendingCombinedOptions = options
+        activeFlow = Self.flowCaptureAndReadNFC
+        mrzScanCallbackId = command.callbackId
+        presentMrzScanner(options: options)
+    }
+
+    /// Phase two: the MRZ is in hand, so read the chip with it.
+    private func continueCombinedFlow(mrzData: [String: Any], callbackId: String?) {
+        let options = pendingCombinedOptions ?? [:]
+        pendingCombinedOptions = nil
+        activeFlow = nil
+        captureAfterRead = true
+        startNfcRead(mrzData: mrzData, readOptions: options, callbackId: callbackId)
+    }
+
+    /// Phase four: photograph the card, now that the chip has been read and checked.
+    private func launchCaptureAfterRead(_ payload: [String: Any], callbackId: String?) {
+        // The MRZ document code is "P" for a passport and "I"/"ID" for a card; either way the chip
+        // has just told us what this document is, so the step list follows from it rather than
+        // from what the caller guessed at the start.
+        let documentType = payload["documentType"] as? String ?? "id"
+        let isPassport = documentType.uppercased().hasPrefix("P")
+        let captureType = isPassport ? "passport" : "id"
+
+        payloadAwaitingCapture = payload
+        payloadAwaitingCaptureCallbackId = callbackId
+
+        let identifiers = Self.identifiers(from: payload)
+        presentCapture(callbackId: callbackId, options: [:]) { controller in
+            controller.captureType = "document"
+            controller.documentType = captureType
+            controller.title = isPassport ? "Capture passport" : "Capture ID card"
+            controller.steps = DocumentCaptureViewController.steps(forDocumentType: captureType)
+            controller.runOcr = false          // the chip supplies these fields, signed
+            controller.expectedIdentifiers = identifiers
+        }
+    }
+
+    /// The identifiers a photograph of this document should contain, drawn from what has already
+    /// been read. Printed on the card in Latin characters and large enough to survive OCR, they
+    /// are what lets the capture screen tell the document from whatever else is on the desk — and
+    /// tell this document from a different one.
+    ///
+    /// Labelled rather than bare so the result can report which matched without repeating holder
+    /// data that is already elsewhere in the payload.
+    private static func identifiers(from source: [String: Any]) -> [String] {
+        let candidates = [
+            ("documentNumber", source["documentNumber"] as? String ?? ""),
+            ("personalNumber", source["personalNumber"] as? String ?? ""),
+            ("surname", source["primaryIdentifier"] as? String ?? ""),
+            ("givenNames", source["secondaryIdentifier"] as? String ?? "")
+        ]
+        return candidates.filter { $0.1.count >= 5 }.map { "\($0.0):\($0.1)" }
+    }
+
+    /// One exit for the combined flow, so the payload shape is the same however it got here.
+    private func sendFinalPayload(callbackId: String?, payload: [String: Any],
+                                  captureIssue: String?) {
+        guard let callbackId = callbackId else { return }
+        var payload = payload
+        if let captureIssue = captureIssue {
+            payload["captureCancelled"] = true
+            payload["captureIssue"] = captureIssue
+        }
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: payload)
+        pluginResult?.keepCallback = false
+        commandDelegate.send(pluginResult, callbackId: callbackId)
     }
 
     /// Shared presentation for the capture screens, so the options that mean the same thing are
@@ -266,16 +382,42 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             return
         }
 
-        guard let mrzData = command.arguments.first as? [String: Any],
-              let documentNumber = mrzData["documentNumber"] as? String,
-              let dateOfBirth = mrzData["dateOfBirth"] as? String,
-              let dateOfExpiry = mrzData["dateOfExpiry"] as? String else {
+        guard let mrzData = command.arguments.first as? [String: Any] else {
             let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Invalid MRZ data. Required: documentNumber, dateOfBirth, dateOfExpiry")
             commandDelegate.send(result, callbackId: command.callbackId)
             return
         }
 
+        captureAfterRead = false
+        let readOptions = command.arguments.count > 1
+            ? (command.arguments[1] as? [String: Any] ?? [:]) : [:]
+        startNfcRead(mrzData: mrzData, readOptions: readOptions, callbackId: command.callbackId)
+    }
+
+    /// The chip read itself, driven either by readNFC or by captureAndReadNFC's second phase.
+    /// Both arrive with the same MRZ dictionary the scanner produces, so neither needs to know how
+    /// the other got here.
+    private func startNfcRead(mrzData: [String: Any], readOptions: [String: Any],
+                              callbackId: String?) {
+        guard let documentNumber = mrzData["documentNumber"] as? String,
+              let dateOfBirth = mrzData["dateOfBirth"] as? String,
+              let dateOfExpiry = mrzData["dateOfExpiry"] as? String else {
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Invalid MRZ data. Required: documentNumber, dateOfBirth, dateOfExpiry")
+            commandDelegate.send(result, callbackId: callbackId)
+            return
+        }
+
         let mrzFormat = mrzData["format"] as? String ?? "TD1"
+
+        // Kept for the comparison against DG1 once the chip is open. Held whenever the scanner
+        // supplied the lines, not only in the combined flow, so a caller who scans and then reads
+        // gets the same check.
+        pendingRawMrzInfo = ""
+        if let rawLines = mrzData["rawMrzLines"] as? [String] {
+            pendingRawMrzInfo = rawLines.joined(separator: " | ")
+        } else if let rawLines = mrzData["rawMrzLines"] as? String {
+            pendingRawMrzInfo = rawLines
+        }
 
         // Optional second argument: { liveness: ..., faceMatch: {...}, passiveAuth: {...} }.
         // Absent means chip-read only, so existing callers are unaffected.
@@ -283,18 +425,16 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         pendingFaceMatchConfig = nil
         pendingPassiveAuthConfig = nil
         pendingIncludeRawDataGroups = false
-        if command.arguments.count > 1, let readOptions = command.arguments[1] as? [String: Any] {
-            if let enabled = readOptions["liveness"] as? Bool, enabled {
-                pendingLivenessOptions = LivenessOptions.from([:])
-            } else if let livenessOptions = readOptions["liveness"] as? [String: Any] {
-                pendingLivenessOptions = LivenessOptions.from(livenessOptions)
-            }
-            pendingFaceMatchConfig = readOptions["faceMatch"] as? [String: Any]
-            pendingPassiveAuthConfig = readOptions["passiveAuth"] as? [String: Any]
-            pendingIncludeRawDataGroups = (readOptions["includeRawDataGroups"] as? Bool) ?? false
+        if let enabled = readOptions["liveness"] as? Bool, enabled {
+            pendingLivenessOptions = LivenessOptions.from([:])
+        } else if let livenessOptions = readOptions["liveness"] as? [String: Any] {
+            pendingLivenessOptions = LivenessOptions.from(livenessOptions)
         }
+        pendingFaceMatchConfig = readOptions["faceMatch"] as? [String: Any]
+        pendingPassiveAuthConfig = readOptions["passiveAuth"] as? [String: Any]
+        pendingIncludeRawDataGroups = (readOptions["includeRawDataGroups"] as? Bool) ?? false
 
-        nfcCallbackId = command.callbackId
+        nfcCallbackId = callbackId
         dgReadCount = 0
 
         // Set total DGs based on format
@@ -357,6 +497,8 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                     guard let self = self, let callbackId = self.nfcCallbackId else { return }
 
                     if let error = error {
+                        // The read failed, so there is nothing to photograph.
+                        self.captureAfterRead = false
                         // Show error on bottom sheet, then dismiss
                         self.nfcBottomSheet?.showError(message: error)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -365,13 +507,21 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: error)
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
-                    } else if let result = result {
-                        // Show success, then dismiss
+                    } else if var result = result {
                         self.nfcBottomSheet?.showSuccess()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            self.dismissNfcBottomSheet()
-                        }
 
+                        // What the document says in print, against what its chip says. Runs
+                        // whenever the scanned MRZ lines were supplied, not only in the combined
+                        // flow, and on both the plain and the liveness paths.
+                        result["mrzComparison"] = MrzChipComparison.compare(
+                            rawMrzLines: self.pendingRawMrzInfo, chip: result)
+
+                        // Long enough for the tick to register as something that happened.
+                        let showSuccessFor = 1.5
+                        // Whatever comes next is presented from the dismissal's completion rather
+                        // than after a delay chosen to outlast it. Presenting over a dismissal
+                        // still in flight is the "already presenting another controller" failure,
+                        // and it would land exactly here, between the chip read and the next step.
                         if self.pendingLivenessOptions != nil {
                             // Chip read done — now prove the holder is present and compare their
                             // face against the portrait we just read off the chip. The readNFC
@@ -379,15 +529,32 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                             self.pendingDocumentResult = result
                             self.sendProgressEvent(state: "livenessCheck")
                             self.documentReader = nil
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                                self.presentLivenessForChipRead()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + showSuccessFor) {
+                                self.dismissNfcBottomSheet { self.presentLivenessForChipRead() }
                             }
                             return
                         }
 
-                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
-                        pluginResult?.keepCallback = false
-                        self.commandDelegate.send(pluginResult, callbackId: callbackId)
+                        if self.captureAfterRead {
+                            // The chip has been read and checked against the print; now photograph
+                            // the card the customer is still holding.
+                            self.captureAfterRead = false
+                            self.nfcCallbackId = nil
+                            self.documentReader = nil
+                            let payload = result
+                            DispatchQueue.main.asyncAfter(deadline: .now() + showSuccessFor) {
+                                self.dismissNfcBottomSheet {
+                                    self.launchCaptureAfterRead(payload, callbackId: callbackId)
+                                }
+                            }
+                            return
+                        }
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + showSuccessFor) {
+                            self.dismissNfcBottomSheet()
+                        }
+                        self.sendFinalPayload(callbackId: callbackId, payload: result,
+                                              captureIssue: nil)
                     } else {
                         self.dismissNfcBottomSheet()
                         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Unknown error")
@@ -407,6 +574,9 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     func cancelRead(command: CDVInvokedUrlCommand) {
         documentReader?.cancel()
         dismissNfcBottomSheet()
+        captureAfterRead = false
+        activeFlow = nil
+        pendingCombinedOptions = nil
 
         if let callbackId = nfcCallbackId {
             let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC reading cancelled")
@@ -427,6 +597,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
         sheet.onCancel = { [weak self] in
             self?.documentReader?.cancel()
+            self?.captureAfterRead = false
             self?.dismissNfcBottomSheet()
 
             if let callbackId = self?.nfcCallbackId {
@@ -441,9 +612,16 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         self.viewController.present(sheet, animated: false)
     }
 
-    private func dismissNfcBottomSheet() {
-        nfcBottomSheet?.animateOut { [weak self] in
+    /// The completion runs once the sheet is off the screen, so the caller can present the next
+    /// one without racing the dismissal.
+    private func dismissNfcBottomSheet(completion: (() -> Void)? = nil) {
+        guard let sheet = nfcBottomSheet else {
+            completion?()
+            return
+        }
+        sheet.animateOut { [weak self] in
             self?.nfcBottomSheet = nil
+            completion?()
         }
     }
 
@@ -479,9 +657,11 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
     func mrzCameraViewController(_ controller: MrzCameraViewController,
                                   didDetectMRZ result: MrzCameraResult) {
-        controller.dismiss(animated: true)
-
-        guard let callbackId = mrzScanCallbackId else { return }
+        guard let callbackId = mrzScanCallbackId else {
+            controller.dismiss(animated: true)
+            return
+        }
+        mrzScanCallbackId = nil
 
         let response: [String: Any] = [
             "documentNumber": result.documentNumber,
@@ -491,13 +671,26 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
             "rawMrzLines": result.rawLines
         ]
 
+        if activeFlow == Self.flowCaptureAndReadNFC {
+            // Phase one of the combined flow: the scan was the means, not the answer. The NFC
+            // sheet is presented from the camera's dismissal completion, not over it.
+            controller.dismiss(animated: true) { [weak self] in
+                self?.continueCombinedFlow(mrzData: response, callbackId: callbackId)
+            }
+            return
+        }
+
+        controller.dismiss(animated: true)
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: response)
         commandDelegate.send(pluginResult, callbackId: callbackId)
-        mrzScanCallbackId = nil
     }
 
     func mrzCameraViewControllerDidCancel(_ controller: MrzCameraViewController) {
         controller.dismiss(animated: true)
+
+        activeFlow = nil
+        pendingCombinedOptions = nil
+        captureAfterRead = false
 
         guard let callbackId = mrzScanCallbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "MRZ scan cancelled")
@@ -512,19 +705,47 @@ extension NfcDocumentReaderPlugin: DocumentCaptureViewControllerDelegate {
 
     func documentCapture(_ controller: DocumentCaptureViewController, didFinish result: [String: Any]) {
         controller.dismiss(animated: true)
-        guard let callbackId = captureCallbackId else { return }
+        let callbackId = captureCallbackId
         captureCallbackId = nil
+
+        if var payload = takePayloadAwaitingCapture() {
+            payload.0["capture"] = result
+            sendFinalPayload(callbackId: payload.1, payload: payload.0, captureIssue: nil)
+            return
+        }
+
+        guard let callbackId = callbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: result)
         commandDelegate.send(pluginResult, callbackId: callbackId)
     }
 
     func documentCaptureDidCancel(_ controller: DocumentCaptureViewController) {
         controller.dismiss(animated: true)
-        guard let callbackId = captureCallbackId else { return }
+        let callbackId = captureCallbackId
         captureCallbackId = nil
+
+        // A cancelled camera must not discard a chip read that already cost the customer a tap and
+        // possibly a liveness check. The payload goes back without the photographs, saying so.
+        if let payload = takePayloadAwaitingCapture() {
+            sendFinalPayload(callbackId: payload.1, payload: payload.0,
+                             captureIssue: "CAPTURE_CANCELLED")
+            return
+        }
+
+        guard let callbackId = callbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR,
                                            messageAs: "Document capture was cancelled.")
         commandDelegate.send(pluginResult, callbackId: callbackId)
+    }
+
+    /// The chip payload held for captureAndReadNFC's last phase, cleared as it is taken so a
+    /// second capture cannot deliver the same read twice.
+    private func takePayloadAwaitingCapture() -> ([String: Any], String?)? {
+        guard let payload = payloadAwaitingCapture else { return nil }
+        let callbackId = payloadAwaitingCaptureCallbackId
+        payloadAwaitingCapture = nil
+        payloadAwaitingCaptureCallbackId = nil
+        return (payload, callbackId)
     }
 }
 

@@ -372,11 +372,7 @@ picture. An `ocr: true` passed here is ignored.
 | `jpegQuality` | `80` | Starting quality |
 | `title` | per type | Screen title |
 
-### `captureAndReadNFC(success, error, [options])`  *(Android only)*
-
-> **iOS:** not yet. This chains the MRZ scan, the chip read and the capture, and that orchestration
-> is only built on Android. Every individual step works on iOS — call `scanMRZ`, `readNFC` and
-> `captureDocument` in sequence and combine the results yourself.
+### `captureAndReadNFC(success, error, [options])`
 
 The whole document check in one call, in this order:
 
@@ -447,8 +443,10 @@ to this flow.
 
 ### `captureDocumentAndLiveness(success, error, [options])`  *(Android only)*
 
-> **iOS:** not yet, for the same reason as `captureAndReadNFC` — assemble it from `scanMRZ`,
-> `captureDocument` and `checkLiveness`.
+> **iOS:** not yet. This chains the MRZ scan, both photographs and a liveness check, and only that
+> orchestration is missing — every step it uses works on iOS. Call `scanMRZ`, `captureDocument` and
+> `checkLiveness` in sequence and combine the results yourself. `captureAndReadNFC` does work on
+> iOS, so prefer it whenever the document has a chip.
 
 MRZ, both sides of the card, then the holder's face — for a document with **no chip**, or as the
 fallback when a chip read is not possible.
