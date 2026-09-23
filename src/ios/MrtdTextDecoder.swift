@@ -44,6 +44,21 @@ enum MrtdTextDecoder {
     // DG12
     static let tagIssuingAuthority = 0x5F19
     static let tagEndorsements     = 0x5F1B
+    static let tagDateOfIssue      = 0x5F26
+
+    /// One TLV value, decoded as UTF-8. For fields that are digits rather than script — the date
+    /// of issue — where the recovery path above does not apply and never will: a date that is not
+    /// valid UTF-8 is a corrupt date, not one in another code page.
+    ///
+    /// Needed because NFCPassportReader's DataGroup12 is internal to that module, so its parsed
+    /// dateOfIssue cannot be reached from here even though it read it.
+    static func value(tag: Int, in raw: [UInt8]?) -> String? {
+        guard let raw = raw,
+              let bytes = parseTlv(raw)[tag]?.first,
+              let text = String(bytes: bytes, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     /// Text recovered from one document, plus the encoding it took.
     struct Recovered {
