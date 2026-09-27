@@ -149,6 +149,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
         config.overallTimeoutMs = options.overallTimeoutMs;
         config.perChallengeTimeoutMs = options.perChallengeTimeoutMs;
         config.faceSearchTimeoutMs = options.faceSearchTimeoutMs;
+        config.poseHoldMs = options.poseHoldMs;
         detector = new LivenessDetector(config);
 
         // Same reason as the MRZ screen: full-screen preview, so the chrome dodges the bars.

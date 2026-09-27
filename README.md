@@ -314,11 +314,57 @@ window.NfcDocumentReader.checkLiveness(function (result) {
 }, { challengeCount: 2 });
 ```
 
-Options: `challenges[]`, `challengeCount` (2), `overallTimeoutMs` (45000), `perChallengeTimeoutMs`
-(15000), `faceSearchTimeoutMs` (20000), `maxImageDimension` (720), `maxImageBytes` (204800),
-`jpegQuality` (85), `cropToFace` (true), `includeFullFrame`, `includeChallengeFrames`, `prompts`.
+Options: `challenges[]`, `challengeCount` (2), `includeCompoundChallenges` (false), `poseHoldMs`
+(600), `overallTimeoutMs` (45000), `perChallengeTimeoutMs` (15000), `faceSearchTimeoutMs` (20000),
+`maxImageDimension` (720), `maxImageBytes` (204800), `jpegQuality` (85), `cropToFace` (true),
+`includeFullFrame`, `includeChallengeFrames`, `prompts`.
 
 Omit `challenges` so the sequence is random — a fixed order is replayable.
+
+#### Challenges
+
+Four single actions, and four compound ones that require a head turn **and** a facial action at the
+same moment:
+
+| Single | Compound |
+|---|---|
+| `blink`, `smile`, `turnLeft`, `turnRight` | `turnLeftSmile`, `turnRightSmile`, `turnLeftBlink`, `turnRightBlink` |
+
+A compound challenge passes only while both conditions hold together — turning, then smiling, does
+not count. That is the point of them: two independent muscle groups at the same instant is the part
+a spliced or replayed clip cannot fake.
+
+**Compound challenges are off by default.** They are harder to pass and their thresholds are not yet
+calibrated against real faces, so enabling them silently would change the experience of every
+customer of an app that merely upgrades this plugin. Opt in with `includeCompoundChallenges: true`,
+which widens the random pool to all eight, or name them explicitly in `challenges`.
+
+Their off-axis thresholds (18° of turn, 0.55 smile probability, against 25° and 0.72 head-on) are
+lower because ML Kit's smile and eye-open classifiers are trained on faces looking at the camera and
+both degrade as the head turns. A compound blink is judged on the **near** eye only — turning to your
+own left hides your left eye, and ML Kit still reports an unreliable probability for it.
+
+#### More pose images
+
+`includeChallengeFrames: true` returns one image per challenge. With the compound challenges enabled
+the pool is eight, so up to eight distinct poses are available in one session:
+
+```js
+{ challengeCount: 4, includeCompoundChallenges: true, includeChallengeFrames: true }
+```
+
+#### Pacing: `poseHoldMs`
+
+How long a pose must be held before it counts, on top of two consecutive qualifying frames.
+
+Before this option existed the check was **frame-count only**, which is frame-rate dependent — and
+that is why it ran visibly faster on Android than on iOS. Measured against the shipping state
+machine: a smile was accepted after **66 ms at 15fps and 16 ms at 60fps**, a fourfold difference from
+nothing but the camera's frame rate. With the 600 ms default it is 660 / 627 / 608 ms at 15 / 30 /
+60fps — the same check on every handset.
+
+Raise it to slow the check further; lower it to speed it up. Setting it to `0` restores the old
+frame-count-only behaviour, which is not recommended.
 
 ### `captureDocument(success, error, [options])`
 

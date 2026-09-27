@@ -22,10 +22,23 @@ struct LivenessOptions {
     var includeFullFrame: Bool = false
     var includeChallengeFrames: Bool = false
 
+    /// Widen the random challenge pool to include the compound ones (a head turn and a smile or a
+    /// blink at the same moment). Off by default: see LivenessDetector.randomChallenges.
+    var includeCompoundChallenges: Bool = false
+
+    /// How long a pose must be held. See LivenessDetector.defaultPoseHoldMs.
+    var poseHoldMs: Double = LivenessDetector.defaultPoseHoldMs
+
     var prompts: [String: String] = LivenessOptions.defaultPrompts
 
     static func from(_ dict: [String: Any]) -> LivenessOptions {
         var options = LivenessOptions()
+
+        // Read before the challenge block below, because it decides what the random pool holds.
+        if let value = dict["includeCompoundChallenges"] as? Bool {
+            options.includeCompoundChallenges = value
+        }
+        if let value = dict["poseHoldMs"] as? Double { options.poseHoldMs = value }
 
         // ---- Challenges ----
         // An explicit list is honoured as given; otherwise a random subset is used, which is
@@ -45,7 +58,11 @@ struct LivenessOptions {
                 options.challenges = parsed
             }
         } else if let count = dict["challengeCount"] as? Int {
-            options.challenges = LivenessDetector.randomChallenges(count: count)
+            options.challenges = LivenessDetector.randomChallenges(
+                count: count, includeCompound: options.includeCompoundChallenges)
+        } else if options.includeCompoundChallenges {
+            // The default count, drawn from the wider pool.
+            options.challenges = LivenessDetector.randomChallenges(count: 2, includeCompound: true)
         }
 
         // ---- Timeouts ----
@@ -81,6 +98,7 @@ struct LivenessOptions {
         config.overallTimeoutMs = overallTimeoutMs
         config.perChallengeTimeoutMs = perChallengeTimeoutMs
         config.faceSearchTimeoutMs = faceSearchTimeoutMs
+        config.poseHoldMs = poseHoldMs
         return config
     }
 
@@ -103,6 +121,10 @@ struct LivenessOptions {
         "smile": "Smile",
         "turnLeft": "Slowly turn your head to your left",
         "turnRight": "Slowly turn your head to your right",
+        "turnLeftSmile": "Turn your head to your left and smile",
+        "turnRightSmile": "Turn your head to your right and smile",
+        "turnLeftBlink": "Turn your head to your left, then blink",
+        "turnRightBlink": "Turn your head to your right, then blink",
         "hold": "Hold still and look at the camera",
         "success": "Done",
         "failed": "Liveness check failed",

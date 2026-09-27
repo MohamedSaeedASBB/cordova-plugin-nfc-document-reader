@@ -34,6 +34,15 @@ public class LivenessOptions {
     public boolean includeFullFrame = false;
     public boolean includeChallengeFrames = false;
 
+    /**
+     * Widen the random challenge pool to include the compound ones (a head turn and a smile or a
+     * blink at the same moment). Off by default: see LivenessDetector.randomChallenges.
+     */
+    public boolean includeCompoundChallenges = false;
+
+    /** How long a pose must be held. See LivenessDetector.DEFAULT_POSE_HOLD_MS. */
+    public long poseHoldMs = 600L;
+
     private final Map<String, String> prompts = defaultPrompts();
 
     public static LivenessOptions fromJson(String json) {
@@ -46,6 +55,11 @@ public class LivenessOptions {
 
         try {
             JSONObject root = new JSONObject(json);
+
+            // Read before the challenge block below, because it decides what the random pool holds.
+            options.includeCompoundChallenges =
+                    root.optBoolean("includeCompoundChallenges", options.includeCompoundChallenges);
+            options.poseHoldMs = root.optLong("poseHoldMs", options.poseHoldMs);
 
             // ---- Challenges ----
             // An explicit list is honoured as given; otherwise a random subset is used, which is
@@ -63,7 +77,12 @@ public class LivenessOptions {
                     options.challenges = parsed;
                 }
             } else if (root.has("challengeCount")) {
-                options.challenges = LivenessDetector.randomChallenges(root.getInt("challengeCount"));
+                options.challenges = LivenessDetector.randomChallenges(
+                        root.getInt("challengeCount"), options.includeCompoundChallenges);
+            } else if (options.includeCompoundChallenges) {
+                // The default count, drawn from the wider pool.
+                options.challenges = LivenessDetector.randomChallenges(
+                        2, true);
             }
 
             // ---- Timeouts ----
@@ -119,6 +138,10 @@ public class LivenessOptions {
             case "smile": return LivenessDetector.Challenge.SMILE;
             case "turnLeft": return LivenessDetector.Challenge.TURN_LEFT;
             case "turnRight": return LivenessDetector.Challenge.TURN_RIGHT;
+            case "turnLeftSmile": return LivenessDetector.Challenge.TURN_LEFT_SMILE;
+            case "turnRightSmile": return LivenessDetector.Challenge.TURN_RIGHT_SMILE;
+            case "turnLeftBlink": return LivenessDetector.Challenge.TURN_LEFT_BLINK;
+            case "turnRightBlink": return LivenessDetector.Challenge.TURN_RIGHT_BLINK;
             default:
                 Log.w(TAG, "Unknown challenge ignored: " + name);
                 return null;
@@ -136,6 +159,10 @@ public class LivenessOptions {
         defaults.put("smile", "Smile");
         defaults.put("turnLeft", "Slowly turn your head to your left");
         defaults.put("turnRight", "Slowly turn your head to your right");
+        defaults.put("turnLeftSmile", "Turn your head to your left and smile");
+        defaults.put("turnRightSmile", "Turn your head to your right and smile");
+        defaults.put("turnLeftBlink", "Turn your head to your left, then blink");
+        defaults.put("turnRightBlink", "Turn your head to your right, then blink");
         defaults.put("hold", "Hold still and look at the camera");
         defaults.put("success", "Done");
         defaults.put("failed", "Liveness check failed");
