@@ -12,6 +12,8 @@ final class ImageCompressor {
 
     /// Quality step used when walking down towards the byte budget.
     private static let qualityStep: CGFloat = 0.08
+    /// Iterations of the quality search. Six halvings resolve the 0.30-0.92 range to about 0.01.
+    private static let qualitySearchSteps = 6
 
     struct Options {
         /// Longest edge of the output image, in pixels.
@@ -20,6 +22,23 @@ final class ImageCompressor {
         var maxBytes: Int = 200 * 1024
         var initialQuality: CGFloat = 0.85
         var minQuality: CGFloat = 0.45
+
+        /// Search for the lowest JPEG quality that still meets `minPSNR`, instead of encoding at
+        /// `initialQuality` and only reducing if the byte budget is exceeded.
+        ///
+        /// A fixed quality spends the same bits on a plain background as on a detailed face, so an
+        /// easy image is stored far larger than it needs to be while a hard one may be pushed
+        /// below what a face matcher can use. Measuring the result and stopping at the threshold
+        /// makes the *quality* the constant and lets the size fall where it falls.
+        var useQualitySearch: Bool = true
+
+        /// Peak signal-to-noise ratio, in dB, against the uncompressed render. 38 dB is where JPEG
+        /// artefacts stop being visible on a face at these dimensions; the usual "visually
+        /// lossless" range quoted for photographs is 36-40.
+        ///
+        /// Raise it for more fidelity and larger files. Below about 34 the eye and mouth detail a
+        /// face matcher relies on starts to go, so that is the floor worth defending.
+        var minPSNR: Double = 38.0
         /// Crop to the face box, expanded by `faceCropPadding` of the box on each side.
         var cropToFace: Bool = true
         var faceCropPadding: CGFloat = 0.55
@@ -70,10 +89,19 @@ final class ImageCompressor {
         }
 
         var quality = min(max(options.initialQuality, options.minQuality), 1.0)
-        guard var data = rendered.jpegData(compressionQuality: quality) else {
-            return nil
+        var data: Data
+
+        if options.useQualitySearch,
+           let found = searchQuality(rendered, options: options) {
+            quality = found.quality
+            data = found.data
+        } else {
+            guard let encoded = rendered.jpegData(compressionQuality: quality) else { return nil }
+            data = encoded
         }
 
+        // The byte budget is a hard cap and outranks the quality floor: a payload that will not
+        // fit through the backend is worse than one that is slightly soft.
         while data.count > options.maxBytes && quality > options.minQuality {
             quality = max(options.minQuality, quality - qualityStep)
             guard let next = rendered.jpegData(compressionQuality: quality) else { break }
@@ -89,6 +117,73 @@ final class ImageCompressor {
                       width: Int(targetSize.width),
                       height: Int(targetSize.height),
                       quality: quality)
+    }
+
+    // MARK: - Quality search
+
+    /// Binary-searches for the lowest quality whose PSNR against the uncompressed render still
+    /// clears `minPSNR`. Six encode/measure rounds on a 720px image cost a fraction of the time
+    /// the face detector has already spent on the same frame.
+    private static func searchQuality(_ rendered: UIImage,
+                                      options: Options) -> (data: Data, quality: CGFloat)? {
+        guard let reference = rendered.cgImage,
+              let referenceGray = grayscale(reference) else { return nil }
+
+        var low = options.minQuality
+        var high = min(max(options.initialQuality, options.minQuality), 1.0)
+
+        // If even the top of the range cannot meet the floor, there is nothing to search for:
+        // take it and let the byte-budget loop below have the last word.
+        guard let highData = rendered.jpegData(compressionQuality: high) else { return nil }
+        guard measurePSNR(highData, against: referenceGray, size: reference) ?? 0 >= options.minPSNR
+        else {
+            return (highData, high)
+        }
+
+        var best = (data: highData, quality: high)
+        for _ in 0..<qualitySearchSteps {
+            let mid = (low + high) / 2
+            guard let data = rendered.jpegData(compressionQuality: mid),
+                  let psnr = measurePSNR(data, against: referenceGray, size: reference) else { break }
+            if psnr >= options.minPSNR {
+                best = (data, mid)      // good enough — try smaller
+                high = mid
+            } else {
+                low = mid               // too lossy — back off
+            }
+        }
+        return best
+    }
+
+    /// PSNR on luminance. Chroma subsampling makes the colour planes a poor guide to how a JPEG
+    /// looks, and luminance is what carries the features a face matcher reads.
+    private static func measurePSNR(_ jpeg: Data, against reference: [UInt8],
+                                    size: CGImage) -> Double? {
+        guard let decoded = UIImage(data: jpeg)?.cgImage,
+              decoded.width == size.width, decoded.height == size.height,
+              let candidate = grayscale(decoded),
+              candidate.count == reference.count, !reference.isEmpty else { return nil }
+
+        var squaredError = 0.0
+        for i in 0..<reference.count {
+            let d = Double(reference[i]) - Double(candidate[i])
+            squaredError += d * d
+        }
+        let mse = squaredError / Double(reference.count)
+        guard mse > 0 else { return Double.infinity }
+        return 10 * log10(255.0 * 255.0 / mse)
+    }
+
+    private static func grayscale(_ image: CGImage) -> [UInt8]? {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        guard let context = CGContext(data: &pixels, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: width,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return pixels
     }
 
     // MARK: - Steps

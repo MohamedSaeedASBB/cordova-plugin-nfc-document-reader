@@ -214,6 +214,19 @@ public class LivenessDetector {
     }
 
     /**
+     * Every challenge, in a random order.
+     *
+     * The order is still shuffled even though the set is fixed. Knowing which challenges are
+     * coming is not the same as knowing when, and a pre-recorded clip still has to match the
+     * sequence it is actually asked for, in the order it is asked.
+     */
+    public static List<Challenge> allChallenges() {
+        List<Challenge> all = new ArrayList<>(Arrays.asList(Challenge.values()));
+        Collections.shuffle(all, new SecureRandom());
+        return all;
+    }
+
+    /**
      * A random subset, which is what stops an attacker pre-recording the expected actions in the
      * expected order.
      *

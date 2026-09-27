@@ -212,6 +212,15 @@ final class LivenessDetector {
     /// Compound challenges are excluded unless asked for. They are harder to pass, their
     /// thresholds are uncalibrated, and turning them on silently would change the experience of
     /// every customer of an app that upgrades this plugin without changing a line of its own code.
+    /// Every challenge, in a random order.
+    ///
+    /// The order is still shuffled even though the set is fixed. Knowing which challenges are
+    /// coming is not the same as knowing when, and a pre-recorded clip has to match the sequence
+    /// it is actually asked for.
+    static func allChallenges() -> [Challenge] {
+        return Challenge.allCases.shuffled()
+    }
+
     static func randomChallenges(count: Int, includeCompound: Bool = false) -> [Challenge] {
         let pool = Challenge.allCases
             .filter { includeCompound || !$0.isCompound }

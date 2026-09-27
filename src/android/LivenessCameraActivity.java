@@ -104,6 +104,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
     private ExecutorService cameraExecutor;
     private FaceDetector faceDetector;
     private LivenessDetector detector;
+    private LivenessVideoRecorder videoRecorder;
     private LivenessOptions options;
     private volatile boolean finished = false;
 
@@ -150,6 +151,9 @@ public class LivenessCameraActivity extends AppCompatActivity {
         config.perChallengeTimeoutMs = options.perChallengeTimeoutMs;
         config.faceSearchTimeoutMs = options.faceSearchTimeoutMs;
         config.poseHoldMs = options.poseHoldMs;
+        if (options.recordVideo) {
+            videoRecorder = new LivenessVideoRecorder(this, options.videoOptions());
+        }
         detector = new LivenessDetector(config);
 
         // Same reason as the MRZ screen: full-screen preview, so the chrome dodges the bars.
@@ -243,8 +247,26 @@ public class LivenessCameraActivity extends AppCompatActivity {
                 });
 
                 cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(this,
-                        CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis);
+                if (videoRecorder != null) {
+                    try {
+                        // Preview + ImageAnalysis + VideoCapture is a combination CameraX supports,
+                        // but not on every device. If the bind is refused, drop the recording
+                        // rather than the liveness check.
+                        cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
+                                preview, imageAnalysis, videoRecorder.useCase());
+                        videoRecorder.start(this);
+                    } catch (Exception bindFailed) {
+                        Log.w(TAG, "Camera cannot record and analyse at once, continuing without "
+                                + "video: " + bindFailed.getClass().getSimpleName());
+                        videoRecorder = null;
+                        cameraProvider.unbindAll();
+                        cameraProvider.bindToLifecycle(this,
+                                CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis);
+                    }
+                } else {
+                    cameraProvider.bindToLifecycle(this,
+                            CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis);
+                }
 
             } catch (Exception e) {
                 Log.e(TAG, "Camera bind failed: " + e.getMessage());
@@ -331,6 +353,19 @@ public class LivenessCameraActivity extends AppCompatActivity {
 
     private void handleUpdate(LivenessDetector.Update update, ImageProxy imageProxy,
                               int rotationDegrees, @Nullable Face face) {
+        if (videoRecorder != null) {
+            // The window opens as soon as the customer is being asked to do something and closes
+            // when the last challenge is done, so the recording holds the actions and not the
+            // reading time before them.
+            if (update.state == LivenessDetector.State.CHALLENGE) {
+                videoRecorder.resume();
+            } else if (update.state == LivenessDetector.State.CAPTURING
+                    || update.state == LivenessDetector.State.PASSED
+                    || update.state == LivenessDetector.State.FAILED) {
+                videoRecorder.pause();
+            }
+        }
+
         if (update.capturePortrait && face != null) {
             Bitmap frame = toUprightBitmap(imageProxy, rotationDegrees);
             if (frame != null) {
@@ -448,6 +483,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
                 return;
             }
 
+            attachVideo(result);
             publishResult(result);
             releaseFrames();
 
@@ -456,6 +492,48 @@ public class LivenessCameraActivity extends AppCompatActivity {
                 finish();
             });
         });
+    }
+
+    /**
+     * Stops the recording and folds it into the payload. Runs on the background executor, because
+     * stopping blocks until the muxer has finalised the file.
+     *
+     * A recording problem must never fail a check that passed, so every failure here is silent and
+     * simply leaves the payload without a video.
+     */
+    private void attachVideo(JSONObject result) {
+        LivenessVideoRecorder recorder = videoRecorder;
+        videoRecorder = null;
+        if (recorder == null) return;
+
+        LivenessVideoRecorder.Output output = recorder.stopAndAwait();
+        if (output == null) return;
+
+        try {
+            byte[] bytes = new byte[(int) output.bytes];
+            java.io.DataInputStream in =
+                    new java.io.DataInputStream(new java.io.FileInputStream(output.file));
+            try {
+                in.readFully(bytes);
+            } finally {
+                in.close();
+            }
+
+            JSONObject video = new JSONObject();
+            video.put("base64", android.util.Base64.encodeToString(
+                    bytes, android.util.Base64.NO_WRAP));
+            video.put("mimeType", "video/mp4; codecs=avc1");
+            video.put("codec", output.codec);
+            video.put("bytes", bytes.length);
+            video.put("durationMs", output.durationMs);
+            video.put("trimmedToChallenges", output.trimmed);
+            result.put("video", video);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not attach the recording: " + e.getClass().getSimpleName());
+        } finally {
+            // Video of a customer's face should not outlive the call that produced it.
+            LivenessVideoRecorder.discard(output.file);
+        }
     }
 
     private JSONObject buildResult() throws JSONException {

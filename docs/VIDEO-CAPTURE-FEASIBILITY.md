@@ -5,8 +5,14 @@ Written in answer to requirements 1 and 2:
 video clip for verification instead of static images — and *"تقييم إمكانية ضغط الفيديو لتقليص الحجم الإجمالي"*
 — evaluating compression to reduce the total size.
 
-**Recommendation: technically straightforward, and worth doing — but not as a replacement for the stills,
-and not before the questions in §5 are answered.** A video is more evidence, not better evidence, and it
+> **Update — this is now implemented and on by default**, at the bank's instruction. The study below
+> stands as the reasoning; §5 lists questions that are policy rather than engineering and are still
+> open. What shipped follows §6: recorded *in addition to* the stills, 480p, trimmed to the challenge
+> windows, HEVC on iOS and H.264 on Android (CameraX does not expose the codec). The payload carries
+> it as `result.video`.
+
+**Original recommendation: technically straightforward, and worth doing — but not as a replacement for
+the stills, and not before the questions in §5 are answered.** A video is more evidence, not better evidence, and it
 enlarges what the bank has to hold.
 
 ## 1. Feasible? Yes, on both platforms, with no new dependency
