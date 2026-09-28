@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cordova-plugin-nfc-document-reader — Security Assessment Pack</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font: 10.5pt/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #14181f; margin: 0; }
+  h1 { font-size: 21pt; margin: 0 0 2mm; letter-spacing: -0.4pt; }
+  h2 { font-size: 13pt; margin: 9mm 0 3mm; padding-bottom: 1.5mm;
+       border-bottom: 1.6pt solid #14181f; page-break-after: avoid; }
+  h3 { font-size: 11pt; margin: 6mm 0 2mm; page-break-after: avoid; }
+  p, li { margin: 0 0 2.4mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 5mm; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.8pt; }
+  table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; font-size: 9pt;
+          page-break-inside: avoid; }
+  th { background: #14181f; color: #fff; text-align: left; padding: 1.8mm 2mm; font-weight: 600; }
+  td { border-bottom: 0.4pt solid #ccd2dc; padding: 1.8mm 2mm; vertical-align: top; }
+  tr:nth-child(even) td { background: #f5f7fa; }
+  .cover { border-left: 4pt solid #14181f; padding: 0 0 0 5mm; margin-bottom: 7mm; }
+  .meta { font-size: 9pt; color: #5b6472; }
+  .meta b { color: #14181f; }
+  .callout { border: 0.8pt solid #14181f; border-left: 4pt solid #14181f;
+             padding: 3mm 4mm; margin: 3mm 0 4mm; background: #f5f7fa;
+             page-break-inside: avoid; }
+  .callout.warn { border-color: #8a5a00; border-left-color: #8a5a00; background: #fdf7ec; }
+  .callout.ok { border-color: #1d6b3f; border-left-color: #1d6b3f; background: #f0f8f3; }
+  .callout h4 { margin: 0 0 1.5mm; font-size: 10pt; }
+  .tag { display: inline-block; font-size: 7.8pt; font-weight: 700; letter-spacing: .4pt;
+         padding: 0.6mm 1.6mm; border-radius: 1mm; vertical-align: 1px; }
+  .tag.no { background: #1d6b3f; color: #fff; }
+  .tag.yes { background: #8a5a00; color: #fff; }
+  .tag.crit { background: #8c1d1d; color: #fff; }
+  .pagebreak { page-break-before: always; }
+  figure { margin: 3mm 0 5mm; page-break-inside: avoid; }
+  figcaption { font-size: 8.6pt; color: #5b6472; margin-top: 1.5mm; }
+  .foot { margin-top: 8mm; padding-top: 2mm; border-top: 0.4pt solid #ccd2dc;
+          font-size: 8.4pt; color: #5b6472; }
+  svg text { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+</style></head><body>
+
+<div class="cover">
+  <h1>Mobile identity-verification plugin</h1>
+  <p style="font-size:12pt;margin:0 0 3mm">Security assessment pack &mdash; framework inventory and data flows</p>
+  <p class="meta">
+    <b>Component:</b> <span class="mono">cordova-plugin-nfc-document-reader</span> v1.0.0 &nbsp;·&nbsp;
+    <b>Commit:</b> <span class="mono">a94c3b1</span> &nbsp;·&nbsp;
+    <b>Prepared:</b> 28 September 2026<br>
+    <b>For:</b> Information Security assessment &nbsp;·&nbsp;
+    <b>Owner:</b> Innovation Department, Al Salam Bank<br>
+    <b>Classification:</b> Internal
+  </p>
+</div>
+
+<h2>1. What this component is, and what it is not</h2>
+
+<p>A Cordova plugin embedded in the bank's mobile application. It reads ICAO&nbsp;9303 electronic
+identity documents (passports and national ID cards) over NFC, scans the printed machine-readable
+zone with the camera, photographs the document, runs a challenge–response liveness check, and
+compares the holder's face against the portrait stored on the document's chip.</p>
+
+<p><b>It is a data-collection and evidence-gathering component. It is not a decision engine.</b>
+It returns measurements — a chip payload, a similarity score, a set of checks that passed or failed
+— to the host application, which forwards them to the bank's backend. The accept/reject decision,
+and every threshold behind it, lives in the backend and is deliberately not shipped in the app.</p>
+
+<table>
+  <tr><th style="width:32%">Property</th><th>Value</th></tr>
+  <tr><td>Execution context</td><td>In-process native code inside the bank's own mobile application</td></tr>
+  <tr><td>Processing location</td><td>Entirely on the customer's handset</td></tr>
+  <tr><td>Server-side components</td><td>None. The plugin has no backend of its own.</td></tr>
+  <tr><td>Outbound network connections made by the plugin</td><td><b>None</b> — see §5</td></tr>
+  <tr><td>Data persisted by the plugin</td><td>None beyond transient temporary files, deleted within the same call</td></tr>
+  <tr><td>Platforms</td><td>Android (Java), iOS 15.5+ (Swift 5)</td></tr>
+</table>
+
+<h2>2. Component architecture</h2>
+
+<figure>
+<svg width="720" height="330" viewBox="0 0 720 330" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#14181f"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="718" height="256" fill="none" stroke="#14181f" stroke-width="1.4" rx="4"/>
+  <text x="12" y="17" font-size="10" font-weight="700" fill="#14181f">CUSTOMER HANDSET — trust boundary</text>
+
+  <rect x="18" y="30" width="200" height="46" fill="#14181f" rx="3"/>
+  <text x="118" y="50" font-size="11" fill="#fff" text-anchor="middle" font-weight="600">Bank mobile application</text>
+  <text x="118" y="65" font-size="9" fill="#c9d2e0" text-anchor="middle">OutSystems / MABS · JavaScript</text>
+
+  <rect x="18" y="96" width="200" height="40" fill="#e8edf5" stroke="#14181f" rx="3"/>
+  <text x="118" y="114" font-size="10" text-anchor="middle" font-weight="600">Cordova bridge</text>
+  <text x="118" y="127" font-size="8.5" fill="#5b6472" text-anchor="middle">9 exported functions · JSON</text>
+
+  <rect x="18" y="156" width="200" height="86" fill="#f5f7fa" stroke="#14181f" stroke-width="1.2" rx="3"/>
+  <text x="118" y="173" font-size="10" text-anchor="middle" font-weight="700">Plugin native layer</text>
+  <text x="118" y="188" font-size="8.5" fill="#333" text-anchor="middle">chip read · MRZ OCR · capture</text>
+  <text x="118" y="201" font-size="8.5" fill="#333" text-anchor="middle">liveness · face match · video</text>
+  <text x="118" y="214" font-size="8.5" fill="#333" text-anchor="middle">passive authentication</text>
+  <text x="118" y="231" font-size="8" fill="#5b6472" text-anchor="middle">no network code</text>
+
+  <rect x="248" y="30" width="216" height="106" fill="#fff" stroke="#14181f" rx="3"/>
+  <text x="356" y="47" font-size="10" text-anchor="middle" font-weight="700">Device hardware</text>
+  <text x="356" y="64" font-size="9" text-anchor="middle">NFC controller (ISO 14443)</text>
+  <text x="356" y="80" font-size="9" text-anchor="middle">Rear camera — MRZ, document</text>
+  <text x="356" y="96" font-size="9" text-anchor="middle">Front camera — liveness, video</text>
+  <text x="356" y="116" font-size="8.5" fill="#5b6472" text-anchor="middle">CPU inference only · no Secure Enclave use</text>
+
+  <rect x="248" y="156" width="216" height="86" fill="#fff" stroke="#14181f" rx="3"/>
+  <text x="356" y="173" font-size="10" text-anchor="middle" font-weight="700">Bundled assets (read-only)</text>
+  <text x="356" y="190" font-size="9" text-anchor="middle">MobileFaceNet — TFLite, 5.2 MB</text>
+  <text x="356" y="206" font-size="9" text-anchor="middle">CSCA trust bundle — PEM</text>
+  <text x="356" y="226" font-size="8.5" fill="#5b6472" text-anchor="middle">compiled in; never fetched at runtime</text>
+
+  <rect x="494" y="30" width="208" height="106" fill="#fff" stroke="#14181f" rx="3"/>
+  <text x="598" y="47" font-size="10" text-anchor="middle" font-weight="700">Third-party SDKs</text>
+  <text x="598" y="64" font-size="9" text-anchor="middle">jmrtd / NFCPassportReader</text>
+  <text x="598" y="80" font-size="9" text-anchor="middle">BouncyCastle · TensorFlow Lite</text>
+  <text x="598" y="96" font-size="9" text-anchor="middle">Google ML Kit · Apple Vision</text>
+  <text x="598" y="116" font-size="8.5" fill="#8a5a00" text-anchor="middle" font-weight="600">ML Kit emits analytics — §5.3</text>
+
+  <rect x="494" y="156" width="208" height="86" fill="#fff" stroke="#14181f" stroke-dasharray="4 3" rx="3"/>
+  <text x="598" y="173" font-size="10" text-anchor="middle" font-weight="700">The document</text>
+  <text x="598" y="190" font-size="9" text-anchor="middle">Contactless chip — BAC / PACE</text>
+  <text x="598" y="206" font-size="9" text-anchor="middle">DG1 DG2 DG7 DG11 DG12, EF.SOD</text>
+  <text x="598" y="226" font-size="8.5" fill="#5b6472" text-anchor="middle">read-only; never written to</text>
+
+  <line x1="118" y1="76" x2="118" y2="94" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+  <line x1="118" y1="136" x2="118" y2="154" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+  <line x1="218" y1="196" x2="246" y2="196" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+  <line x1="218" y1="180" x2="246" y2="100" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+  <line x1="464" y1="196" x2="492" y2="196" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+  <line x1="464" y1="86" x2="492" y2="86" stroke="#14181f" stroke-width="1.3" marker-end="url(#a)"/>
+
+  <rect x="18" y="276" width="200" height="44" fill="#fff" stroke="#14181f" stroke-width="1.3" rx="3"/>
+  <text x="118" y="294" font-size="10" text-anchor="middle" font-weight="700">Bank backend</text>
+  <text x="118" y="308" font-size="8.5" fill="#5b6472" text-anchor="middle">decision · thresholds · retention</text>
+  <line x1="118" y1="257" x2="118" y2="274" stroke="#14181f" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="128" y="270" font-size="8.5" fill="#14181f">TLS, by the application — not by the plugin</text>
+
+  <rect x="494" y="276" width="208" height="44" fill="#fdf7ec" stroke="#8a5a00" stroke-width="1.2" rx="3"/>
+  <text x="598" y="294" font-size="9.5" text-anchor="middle" font-weight="700" fill="#8a5a00">play.googleapis.com</text>
+  <text x="598" y="308" font-size="8.5" fill="#8a5a00" text-anchor="middle">ML Kit usage analytics — §5.3</text>
+  <line x1="598" y1="136" x2="598" y2="154" stroke="#8a5a00" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="640" y1="242" x2="640" y2="274" stroke="#8a5a00" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#a)"/>
+</svg>
+<figcaption>Everything inside the outer box runs on the handset. The only two arrows leaving it are the
+application's own TLS call to the bank, and Google ML Kit's analytics — the latter is not initiated by
+plugin code.</figcaption>
+</figure>
+
+<h2 class="pagebreak">3. Third-party framework inventory</h2>
+
+<p>Versions are taken from <span class="mono">plugin.xml</span> and from a resolved
+<span class="mono">Podfile.lock</span> of an actual build, not from documentation.</p>
+
+<h3>3.1 Android</h3>
+<table>
+  <tr><th style="width:34%">Library</th><th style="width:11%">Version</th><th style="width:17%">Licence</th><th>Function</th></tr>
+  <tr><td class="mono">org.jmrtd:jmrtd</td><td>0.7.42</td><td>LGPL 3.0</td><td>ICAO 9303 protocol: BAC/PACE, EF.SOD, data groups</td></tr>
+  <tr><td class="mono">net.sf.scuba:scuba-sc-android</td><td>0.0.26</td><td>LGPL 3.0</td><td>Smart-card transport beneath jmrtd</td></tr>
+  <tr><td class="mono">org.bouncycastle:bcprov-jdk18on</td><td>1.78</td><td>MIT-style</td><td>Cryptography for passive authentication</td></tr>
+  <tr><td class="mono">edu.ucar:jj2000</td><td>5.2</td><td>BSD-style</td><td>JPEG 2000 decoding of the DG2 portrait</td></tr>
+  <tr><td class="mono">com.google.mlkit:text-recognition</td><td>16.0.0</td><td>Google ToS</td><td>MRZ OCR, document evidence check</td></tr>
+  <tr><td class="mono">com.google.mlkit:face-detection</td><td>16.1.7</td><td>Google ToS</td><td>Liveness challenges, face cropping</td></tr>
+  <tr><td class="mono">androidx.camera:*</td><td>1.3.1</td><td>Apache 2.0</td><td>Camera preview, frame analysis, video recording</td></tr>
+  <tr><td class="mono">androidx.appcompat:appcompat</td><td>1.6.1</td><td>Apache 2.0</td><td>Activity theming</td></tr>
+  <tr><td class="mono">org.tensorflow:tensorflow-lite</td><td>2.14.0</td><td>Apache 2.0</td><td>Face-match model inference</td></tr>
+</table>
+
+<h3>3.2 iOS</h3>
+<table>
+  <tr><th style="width:34%">Pod</th><th style="width:11%">Resolved</th><th style="width:17%">Licence</th><th>Function</th></tr>
+  <tr><td class="mono">NFCPassportReader</td><td>1.1.9</td><td>MIT</td><td>ICAO 9303 over CoreNFC</td></tr>
+  <tr><td class="mono">GoogleMLKit/FaceDetection</td><td>8.0.0</td><td>Google ToS</td><td>Liveness challenges, face cropping</td></tr>
+  <tr><td class="mono">TensorFlowLiteSwift</td><td>2.14.x</td><td>Apache 2.0</td><td>Face-match model inference</td></tr>
+</table>
+<p style="font-size:9pt">Pulled in transitively and therefore present in the shipped binary:
+<span class="mono">GoogleDataTransport 10.1.0, GoogleUtilities 8.1.0, GoogleToolboxForMac 4.2.1,
+GTMSessionFetcher/Core 3.5.0, MLKitCommon 13.0.0, MLKitFaceDetection 7.0.0, MLKitVision 9.0.0,
+MLImage 1.0.0-beta7, nanopb, PromisesObjC</span>.</p>
+
+<p><b>Apple frameworks used directly, with no third party involved:</b> CoreNFC, Vision (all OCR on
+iOS), AVFoundation, UIKit, CoreGraphics, ImageIO. <i>OCR on iOS is Apple Vision, not ML Kit — and
+Vision recognises Arabic, which ML Kit has no model for.</i></p>
+
+<h3>3.3 Bundled model</h3>
+<table>
+  <tr><th style="width:32%">Property</th><th>Value</th></tr>
+  <tr><td>Model</td><td>MobileFaceNet, TensorFlow Lite, 5.2 MB, compiled into the app</td></tr>
+  <tr><td>Input / output</td><td>112 × 112 RGB → 192-dimensional embedding</td></tr>
+  <tr><td>Comparison</td><td>Cosine similarity, computed on-device</td></tr>
+  <tr><td>Decision threshold</td><td><b>Not present in the plugin.</b> The similarity is returned; the backend decides.</td></tr>
+  <tr><td>Provenance</td><td><span class="mono">src/models/PROVENANCE.md</span> — model governance sign-off outstanding</td></tr>
+</table>
+
+<h2 class="pagebreak">4. Processing flow</h2>
+
+<figure>
+<svg width="720" height="248" viewBox="0 0 720 248" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="b" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#14181f"/>
+    </marker>
+  </defs>
+  <text x="0" y="12" font-size="10" font-weight="700">captureAndReadNFC() — the full chain, one callback</text>
+
+  <g>
+    <rect x="0" y="24" width="128" height="58" fill="#14181f" rx="3"/>
+    <text x="64" y="44" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">1 · Scan MRZ</text>
+    <text x="64" y="58" font-size="8" fill="#c9d2e0" text-anchor="middle">rear camera, OCR</text>
+    <text x="64" y="70" font-size="8" fill="#c9d2e0" text-anchor="middle">derives the chip key</text>
+
+    <rect x="148" y="24" width="128" height="58" fill="#14181f" rx="3"/>
+    <text x="212" y="44" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">2 · Read chip</text>
+    <text x="212" y="58" font-size="8" fill="#c9d2e0" text-anchor="middle">NFC, BAC or PACE</text>
+    <text x="212" y="70" font-size="8" fill="#c9d2e0" text-anchor="middle">DG1 DG2 DG7 DG11 SOD</text>
+
+    <rect x="296" y="24" width="128" height="58" fill="#14181f" rx="3"/>
+    <text x="360" y="40" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">3 · Verify</text>
+    <text x="360" y="53" font-size="8" fill="#c9d2e0" text-anchor="middle">SOD signature, DG hashes</text>
+    <text x="360" y="64" font-size="8" fill="#c9d2e0" text-anchor="middle">CSCA chain</text>
+    <text x="360" y="75" font-size="8" fill="#c9d2e0" text-anchor="middle">printed MRZ vs chip</text>
+
+    <rect x="444" y="24" width="128" height="58" fill="#14181f" rx="3"/>
+    <text x="508" y="40" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">4 · Liveness</text>
+    <text x="508" y="53" font-size="8" fill="#c9d2e0" text-anchor="middle">front camera</text>
+    <text x="508" y="64" font-size="8" fill="#c9d2e0" text-anchor="middle">8 challenges, video</text>
+    <text x="508" y="75" font-size="8" fill="#c9d2e0" text-anchor="middle">face match vs DG2</text>
+
+    <rect x="592" y="24" width="128" height="58" fill="#14181f" rx="3"/>
+    <text x="656" y="44" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">5 · Photograph</text>
+    <text x="656" y="58" font-size="8" fill="#c9d2e0" text-anchor="middle">both sides of the card</text>
+    <text x="656" y="70" font-size="8" fill="#c9d2e0" text-anchor="middle">checked against chip data</text>
+
+    <line x1="128" y1="53" x2="146" y2="53" stroke="#14181f" stroke-width="1.4" marker-end="url(#b)"/>
+    <line x1="276" y1="53" x2="294" y2="53" stroke="#14181f" stroke-width="1.4" marker-end="url(#b)"/>
+    <line x1="424" y1="53" x2="442" y2="53" stroke="#14181f" stroke-width="1.4" marker-end="url(#b)"/>
+    <line x1="572" y1="53" x2="590" y2="53" stroke="#14181f" stroke-width="1.4" marker-end="url(#b)"/>
+  </g>
+
+  <rect x="0" y="102" width="720" height="56" fill="#f5f7fa" stroke="#14181f" rx="3"/>
+  <text x="10" y="119" font-size="9.5" font-weight="700">Why this order</text>
+  <text x="10" y="134" font-size="8.6">The MRZ must be read first because it derives the chip access key. The chip must be read before the</text>
+  <text x="10" y="147" font-size="8.6">photographs, so the print-versus-chip comparison happens while the customer still holds the document.</text>
+
+  <rect x="0" y="176" width="720" height="66" fill="#fff" stroke="#14181f" stroke-width="1.2" rx="3"/>
+  <text x="10" y="193" font-size="9.5" font-weight="700">Single JSON result → host application → bank backend over the application's own TLS channel</text>
+  <text x="10" y="208" font-size="8.6">document fields · DG2 portrait · passive-authentication verdict · MRZ/chip comparison · liveness result</text>
+  <text x="10" y="221" font-size="8.6">challenge frames · session video · face-match similarity (a number, not a decision) · document photographs</text>
+  <text x="10" y="236" font-size="8.6" fill="#5b6472">Nothing is written to durable storage by the plugin. Temporary video files are deleted within the same call.</text>
+</svg>
+<figcaption>The other eight exported functions are subsets of this chain and can be called individually.</figcaption>
+</figure>
+
+<h2>5. Network egress &mdash; the assessment question</h2>
+
+<div class="callout ok">
+<h4><span class="tag no">NO EGRESS</span> &nbsp; Plugin code opens no network connections</h4>
+<p style="margin:0">Every network primitive on both platforms was searched for
+(<span class="mono">HttpURLConnection, URLSession, dataTask, openConnection, Socket, http://,
+https://</span>). There are no matches in the plugin's source. No document data, chip data,
+biometric data or image ever leaves the handset by an action of this component.</p>
+</div>
+
+<h3>5.1 Change history — a removed exfiltration path</h3>
+<div class="callout warn">
+<p style="margin:0 0 2mm"><b>Until commit <span class="mono">a94c3b1</span> (28 September 2026) this was not true, and assessors reviewing an
+earlier build must treat it as a finding.</b></p>
+<p style="margin:0 0 2mm">Earlier revisions POSTed <b>every NFC read failure</b> to a third-party
+Supabase project belonging to the plugin's original developer, on both platforms. The payload
+carried a partially masked document number (<span class="mono">1139***06</span>), a partially
+masked date of birth (<span class="mono">97***2</span>) and expiry, the host application's bundle
+identifier, the handset model and OS build, chip protocol details, and up to 2,000 characters of
+reader internals. The endpoint and its API key were XOR-obfuscated in source, with an accompanying
+comment stating the purpose was to prevent extraction from a decompiled build.</p>
+<p style="margin:0"><b>The masking did not anonymise the data.</b> Four leading and two trailing
+digits of a nine-digit document number leave one thousand candidates; a birth year and a bank's
+bundle identifier reduce that to one individual. The network path has been deleted — not disabled
+behind a configuration flag — and the diagnostic loggers now write to the device log only, with the
+MRZ arguments deliberately never written.</p>
+</div>
+
+<h3>5.2 Residual egress that is not ours</h3>
+<div class="callout warn">
+<h4><span class="tag yes">PRESENT</span> &nbsp; Google ML Kit emits usage and diagnostic analytics</h4>
+<p style="margin:0 0 2mm">ML Kit performs inference on-device — no face or document is uploaded for
+processing. However the SDK reports usage and diagnostic data to Google. Evidence taken from the
+pods resolved for this build, not from documentation:</p>
+<ul style="margin:0 0 2mm">
+  <li><span class="mono">MLKitCommon.framework</span> contains the endpoints
+      <span class="mono">https://play.googleapis.com/log</span> and
+      <span class="mono">/log/batch</span>, and a class <span class="mono">MLKAnalyticsLogger</span>.</li>
+  <li>It depends on <span class="mono">GoogleDataTransport</span>, whose Apple privacy manifest
+      declares collection of <span class="mono">OtherDiagnosticData</span> for
+      <span class="mono">Analytics</span>.</li>
+  <li><b>Google's own privacy manifest for <span class="mono">MLKitFaceDetection</span></b> declares
+      collection of: <span class="mono">DeviceID</span>,
+      <span class="mono">OtherUserContent</span>, <span class="mono">OtherDiagnosticData</span>,
+      <span class="mono">PerformanceData</span>, <span class="mono">ProductInteraction</span>,
+      <span class="mono">OtherDataTypes</span>. <span class="mono">NSPrivacyTracking</span> is false
+      and no tracking domains are declared.</li>
+</ul>
+<p style="margin:0"><b><span class="mono">OtherUserContent</span> in a face-detection SDK is the item
+requiring clarification from Google before any statement that no data leaves the device is signed.</b>
+No comprehensive opt-out is documented for standalone ML Kit;
+<span class="mono">FIREBASE_ANALYTICS_COLLECTION_ENABLED</span> governs a different component.</p>
+</div>
+
+<h3>5.3 Options available to eliminate it</h3>
+<table>
+  <tr><th style="width:18%">Option</th><th style="width:41%">What it involves</th><th>Assessment</th></tr>
+  <tr><td><b>Remove ML Kit from iOS</b></td>
+      <td>Apple Vision already performs all OCR on iOS and also detects faces, landmarks and head pose
+          on-device with no analytics component. Vision does not expose smile and eye-open
+          probabilities, so those must be derived from eye and mouth landmarks, and the liveness
+          thresholds recalibrated.</td>
+      <td>Well-understood work. Removes the last third-party network component from the iOS build.</td></tr>
+  <tr><td><b>Remove ML Kit from Android</b></td>
+      <td>ML Kit supplies both the OCR and the face detection there. Replacement means bundling a text
+          recogniser and a face detector as TFLite models.</td>
+      <td>Substantially larger, with a model-governance question attached to each model.</td></tr>
+  <tr><td><b>Network policy</b></td>
+      <td>ML Kit's traffic goes to <span class="mono">play.googleapis.com</span>, which a
+          managed-device policy can observe and block.</td>
+      <td>A mitigation, not a fix. Whether it suffices is the bank's decision.</td></tr>
+</table>
+
+<h2 class="pagebreak">6. Data handled, and where it goes</h2>
+<table>
+  <tr><th style="width:26%">Data</th><th style="width:12%">Class</th><th style="width:22%">Source</th><th>Destination and lifetime</th></tr>
+  <tr><td>MRZ (document number, DOB, expiry)</td><td>PII</td><td>Camera OCR</td><td>In memory; returned in the result. Used to derive the chip access key.</td></tr>
+  <tr><td>Chip data groups DG1, DG11, DG12</td><td>PII</td><td>NFC</td><td>In memory; returned in the result.</td></tr>
+  <tr><td>DG2 facial image</td><td><b>Biometric</b></td><td>NFC</td><td>In memory; returned base64 in the result.</td></tr>
+  <tr><td>DG7 signature image</td><td>PII</td><td>NFC</td><td>In memory; returned base64 in the result.</td></tr>
+  <tr><td>Liveness portrait and challenge frames</td><td><b>Biometric</b></td><td>Front camera</td><td>In memory; compressed and returned base64.</td></tr>
+  <tr><td>Liveness session video</td><td><b>Biometric</b></td><td>Front camera</td><td>Temporary file in app cache, <b>deleted immediately</b> after encoding into the result.</td></tr>
+  <tr><td>Document photographs</td><td>PII</td><td>Rear camera</td><td>In memory; compressed and returned base64.</td></tr>
+  <tr><td>Face-match similarity</td><td>Derived</td><td>On-device TFLite</td><td>A number in the result. No threshold applied.</td></tr>
+  <tr><td>Diagnostic error detail</td><td>Technical</td><td>Reader internals</td><td>Device log only. MRZ values deliberately excluded.</td></tr>
+</table>
+
+<div class="callout">
+<h4>Consequence for the bank</h4>
+<p style="margin:0">The plugin hands biometric data to the host application in a single JSON payload.
+<b>Everything that matters for retention, encryption at rest, access control and consent is therefore
+a property of the application and the backend, not of this component.</b> A payload can exceed 1 MB;
+it must be treated as biometric personal data from the moment the callback fires.</p>
+</div>
+
+<h2>7. Cryptography</h2>
+<table>
+  <tr><th style="width:26%">Where</th><th style="width:30%">Mechanism</th><th>Notes</th></tr>
+  <tr><td>Chip access</td><td>BAC (3DES) or PACE (ECDH/AES)</td><td>ICAO 9303 standard; PACE preferred and negotiated automatically. The protocol reports which was used.</td></tr>
+  <tr><td>Secure messaging</td><td>Per ICAO 9303</td><td>Provided by jmrtd / NFCPassportReader, not reimplemented.</td></tr>
+  <tr><td>Passive authentication</td><td>CMS SignedData over EF.SOD; SHA-1/SHA-256 data-group hashes</td><td>BouncyCastle on Android; platform crypto on iOS.</td></tr>
+  <tr><td>Trust anchors</td><td>CSCA X.509 certificates, PEM bundle compiled into the app</td><td>Never fetched at runtime. See §8.</td></tr>
+  <tr><td>Transport to the bank</td><td><b>Not in scope</b></td><td>The plugin performs no transport. TLS is the application's responsibility.</td></tr>
+  <tr><td>Key material held by the plugin</td><td><b>None</b></td><td>No secrets, no API keys, no credentials in the source after the change in §5.1.</td></tr>
+</table>
+
+<h2>8. Trust model for document authenticity</h2>
+<p>Passive authentication decomposes into three independent checks, each reported separately rather
+than collapsed into one boolean:</p>
+<table>
+  <tr><th style="width:30%">Check</th><th style="width:22%">Reported as</th><th>Meaning</th></tr>
+  <tr><td>SOD signature valid</td><td><span class="mono">sodSignatureVerified</span></td><td>The Document Signer's signature over EF.SOD verifies.</td></tr>
+  <tr><td>Data-group integrity</td><td><span class="mono">dataIntegrityVerified</span></td><td>Every data group hashes to the value EF.SOD records.</td></tr>
+  <tr><td>Issuer trusted</td><td><span class="mono">issuerTrusted</span></td><td>The Document Signer chains to a CSCA in the bundled trust store.</td></tr>
+</table>
+<div class="callout warn">
+<p style="margin:0"><b>The first two checks pass for a forger who signs their own data with their own
+certificate.</b> Only the third makes the result mean "signed by the state that claims to have issued
+this document". Without a CSCA bundle installed the status is
+<span class="mono">notVerified</span> / <span class="mono">NO_TRUST_ANCHORS</span> — not a failure,
+but not evidence of authenticity either. <b>A CSCA bundle is not currently installed.</b></p>
+</div>
+
+<h2 class="pagebreak">9. Security controls: what each proves, and what it does not</h2>
+<table>
+  <tr><th style="width:26%">Control</th><th style="width:36%">Establishes</th><th>Does not establish</th></tr>
+  <tr><td>Chip read (BAC/PACE)</td><td>The document carries a genuine, readable MRTD chip whose access key matches the printed MRZ.</td><td>Anything about the person presenting it.</td></tr>
+  <tr><td>Passive authentication</td><td>The data groups are byte-for-byte what the issuer signed, and the signer chains to a trusted CSCA.</td><td><b>Not clone detection.</b> A bit-perfect copy of a genuine chip passes. Chip Authentication detects cloning; it is reported but not relied upon.</td></tr>
+  <tr><td>MRZ ↔ chip comparison</td><td>The print and the chip agree across seven fields, with a per-field edit distance.</td><td>A mismatch may equally be OCR misreading worn print — it is a finding for a human, not proof of fraud.</td></tr>
+  <tr><td>Document evidence check</td><td>The photograph shows the document that was just read — MRZ shape plus identifiers taken from the chip.</td><td><b>Not liveness of the document.</b> Cannot distinguish a card from a photograph of a card or one displayed on a screen.</td></tr>
+  <tr><td>Liveness challenges</td><td>A printed photograph or a still image did not pass. Eight challenges, randomly ordered, four requiring two simultaneous actions.</td><td><b>Not defeated:</b> a replayed video, an injected or virtual camera feed, or a 3D mask. There is no presentation-attack detection.</td></tr>
+  <tr><td>Session video</td><td>An auditable record of what the customer actually did.</td><td>No improvement to attack detection — a replay attack is simply recorded.</td></tr>
+  <tr><td>Face match</td><td>A cosine similarity between the liveness portrait and the DG2 chip portrait, computed on-device.</td><td><b>Not a decision.</b> No threshold is applied in the app; the backend decides.</td></tr>
+</table>
+
+<h2>10. Permissions and entitlements</h2>
+<table>
+  <tr><th style="width:20%">Platform</th><th style="width:42%">Declared</th><th>Purpose</th></tr>
+  <tr><td>Android</td><td class="mono">android.permission.CAMERA</td><td>MRZ, document capture, liveness</td></tr>
+  <tr><td>Android</td><td class="mono">android.permission.NFC</td><td>Chip reading; NFC hardware declared required</td></tr>
+  <tr><td>Android</td><td><i>No INTERNET permission required by the plugin</i></td><td>Consistent with §5</td></tr>
+  <tr><td>iOS</td><td class="mono">NSCameraUsageDescription</td><td>As above</td></tr>
+  <tr><td>iOS</td><td class="mono">NFCReaderUsageDescription</td><td>Chip reading</td></tr>
+  <tr><td>iOS</td><td class="mono">com.apple.developer.nfc.readersession.formats</td><td>Entitlement; App ID needs NFC Tag Reading enabled</td></tr>
+  <tr><td>iOS</td><td class="mono">...iso7816.select-identifiers</td><td>The MRTD application identifier</td></tr>
+</table>
+<p style="font-size:9pt">No microphone permission is requested. Audio is never recorded, including
+during video capture — a liveness check has nothing to learn from it and recording a customer's
+voice is a consent question nobody has asked.</p>
+
+<h2>11. Open items for the assessment</h2>
+<table>
+  <tr><th style="width:5%">#</th><th style="width:40%">Item</th><th>Status / owner</th></tr>
+  <tr><td>1</td><td>Clarify with Google what <span class="mono">OtherUserContent</span> covers in the ML Kit face-detection privacy manifest</td><td><b>Open</b> — blocks any unqualified no-egress statement</td></tr>
+  <tr><td>2</td><td>Decide whether to remove ML Kit from the iOS build (§5.3)</td><td>Open — Innovation / InfoSec</td></tr>
+  <tr><td>3</td><td>Install and govern a CSCA trust bundle; without it issuer trust is never established</td><td>Open — see <span class="mono">src/csca/README.md</span></td></tr>
+  <tr><td>4</td><td>Model governance sign-off for MobileFaceNet</td><td>Open — Model Risk</td></tr>
+  <tr><td>5</td><td>Calibrate the backend face-match threshold; one genuine pair observed at 0.7474</td><td>Open — backend</td></tr>
+  <tr><td>6</td><td>Retention, consent and access control for biometric payloads and session video</td><td>Open — Legal / Compliance / Data Protection</td></tr>
+  <tr><td>7</td><td>Liveness compound-challenge thresholds not yet calibrated against real faces</td><td>Open — first device pilot</td></tr>
+  <tr><td>8</td><td>No penetration test or presentation-attack test has been performed on this component</td><td>Open — InfoSec</td></tr>
+</table>
+
+<div class="callout">
+<h4>Statement of verification status</h4>
+<p style="margin:0">The framework inventory, the absence of plugin network code, and the ML Kit
+privacy-manifest findings in this document were verified by inspection of the source and of a
+resolved dependency build on 28 September 2026. Both platforms compile against real dependencies.
+<b>The plugin has not been executed on a physical handset for the changes in this revision, and no
+independent security testing has been carried out.</b></p>
+</div>
+
+<div class="foot">
+cordova-plugin-nfc-document-reader v1.0.0 · commit a94c3b1 · prepared 28 September 2026 for
+Information Security assessment · Innovation Department, Al Salam Bank · Internal<br>
+Companion documents in the repository: <span class="mono">docs/DATA-FLOW-AND-EGRESS.md</span>,
+<span class="mono">docs/TECHNICAL-DOSSIER.md</span>,
+<span class="mono">docs/VIDEO-CAPTURE-FEASIBILITY.md</span>, <span class="mono">src/csca/README.md</span>.
+</div>
+
+</body></html>
