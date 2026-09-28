@@ -44,7 +44,7 @@
   <p style="font-size:12pt;margin:0 0 3mm">Security assessment pack &mdash; framework inventory and data flows</p>
   <p class="meta">
     <b>Component:</b> <span class="mono">cordova-plugin-nfc-document-reader</span> v1.0.0 &nbsp;·&nbsp;
-    <b>Commit:</b> <span class="mono">a94c3b1</span> &nbsp;·&nbsp;
+    <b>Commit:</b> <span class="mono">COMMIT_SHA</span> &nbsp;·&nbsp;
     <b>Prepared:</b> 28 September 2026<br>
     <b>For:</b> Information Security assessment &nbsp;·&nbsp;
     <b>Owner:</b> Innovation Department, Al Salam Bank<br>
@@ -227,7 +227,7 @@ Vision recognises Arabic, which ML Kit has no model for.</i></p>
     <rect x="444" y="24" width="128" height="58" fill="#14181f" rx="3"/>
     <text x="508" y="40" font-size="10" fill="#fff" text-anchor="middle" font-weight="700">4 · Liveness</text>
     <text x="508" y="53" font-size="8" fill="#c9d2e0" text-anchor="middle">front camera</text>
-    <text x="508" y="64" font-size="8" fill="#c9d2e0" text-anchor="middle">8 challenges, video</text>
+    <text x="508" y="64" font-size="8" fill="#c9d2e0" text-anchor="middle">4 challenges, video</text>
     <text x="508" y="75" font-size="8" fill="#c9d2e0" text-anchor="middle">face match vs DG2</text>
 
     <rect x="592" y="24" width="128" height="58" fill="#14181f" rx="3"/>
@@ -385,7 +385,7 @@ but not evidence of authenticity either. <b>A CSCA bundle is not currently insta
   <tr><td>Passive authentication</td><td>The data groups are byte-for-byte what the issuer signed, and the signer chains to a trusted CSCA.</td><td><b>Not clone detection.</b> A bit-perfect copy of a genuine chip passes. Chip Authentication detects cloning; it is reported but not relied upon.</td></tr>
   <tr><td>MRZ ↔ chip comparison</td><td>The print and the chip agree across seven fields, with a per-field edit distance.</td><td>A mismatch may equally be OCR misreading worn print — it is a finding for a human, not proof of fraud.</td></tr>
   <tr><td>Document evidence check</td><td>The photograph shows the document that was just read — MRZ shape plus identifiers taken from the chip.</td><td><b>Not liveness of the document.</b> Cannot distinguish a card from a photograph of a card or one displayed on a screen.</td></tr>
-  <tr><td>Liveness challenges</td><td>A printed photograph or a still image did not pass. Eight challenges, randomly ordered, four requiring two simultaneous actions.</td><td><b>Not defeated:</b> a replayed video, an injected or virtual camera feed, or a 3D mask. There is no presentation-attack detection.</td></tr>
+  <tr><td>Liveness challenges</td><td>A printed photograph or a still image did not pass. Four single-action challenges by default (blink, smile, turn left, turn right) in a randomised order. Four compound challenges requiring two simultaneous actions exist but are disabled pending calibration.</td><td><b>Not defeated:</b> a replayed video, an injected or virtual camera feed, or a 3D mask. There is no presentation-attack detection. With four challenges drawn from a pool of four, the randomisation is of order only, not of which challenges are asked.</td></tr>
   <tr><td>Session video</td><td>An auditable record of what the customer actually did.</td><td>No improvement to attack detection — a replay attack is simply recorded.</td></tr>
   <tr><td>Face match</td><td>A cosine similarity between the liveness portrait and the DG2 chip portrait, computed on-device.</td><td><b>Not a decision.</b> No threshold is applied in the app; the backend decides.</td></tr>
 </table>
@@ -414,7 +414,7 @@ voice is a consent question nobody has asked.</p>
   <tr><td>4</td><td>Model governance sign-off for MobileFaceNet</td><td>Open — Model Risk</td></tr>
   <tr><td>5</td><td>Calibrate the backend face-match threshold; one genuine pair observed at 0.7474</td><td>Open — backend</td></tr>
   <tr><td>6</td><td>Retention, consent and access control for biometric payloads and session video</td><td>Open — Legal / Compliance / Data Protection</td></tr>
-  <tr><td>7</td><td>Liveness compound-challenge thresholds not yet calibrated against real faces</td><td>Open — first device pilot</td></tr>
+  <tr><td>7</td><td>Liveness compound-challenge thresholds not yet calibrated against real faces; the compound challenges are disabled by default until they are</td><td>Open — first device pilot</td></tr>
   <tr><td>8</td><td>No penetration test or presentation-attack test has been performed on this component</td><td>Open — InfoSec</td></tr>
 </table>
 
@@ -428,7 +428,7 @@ independent security testing has been carried out.</b></p>
 </div>
 
 <div class="foot">
-cordova-plugin-nfc-document-reader v1.0.0 · commit a94c3b1 · prepared 28 September 2026 for
+cordova-plugin-nfc-document-reader v1.0.0 · commit COMMIT_SHA · prepared 28 September 2026 for
 Information Security assessment · Innovation Department, Al Salam Bank · Internal<br>
 Companion documents in the repository: <span class="mono">docs/DATA-FLOW-AND-EGRESS.md</span>,
 <span class="mono">docs/TECHNICAL-DOSSIER.md</span>,
