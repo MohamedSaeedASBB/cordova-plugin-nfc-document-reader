@@ -39,10 +39,24 @@ public class LivenessOptions {
     public boolean includeChallengeFrames = false;
 
     /**
-     * Widen the challenge pool to include the compound ones (a head turn and a smile or a blink at
-     * the same moment). On by default: the bank asked for every challenge to be required.
+     * How many challenges a session asks for when the caller does not say.
+     *
+     * Four, which with the compound challenges off is every single-action challenge there is —
+     * blink, smile, turn left, turn right — in a random order. Four actions is materially harder to
+     * pre-record than two while still being something a customer can do without being coached.
      */
-    public boolean includeCompoundChallenges = true;
+    public static final int DEFAULT_CHALLENGE_COUNT = 4;
+
+    /**
+     * Widen the challenge pool to include the compound ones (a head turn and a smile or a blink at
+     * the same moment).
+     *
+     * Off by default. The compound challenges ask the customer to hold two things at once, their
+     * thresholds are not calibrated against real faces, and a challenge a genuine customer cannot
+     * pass is a failed onboarding rather than a caught fraud. They remain available to a caller who
+     * opts in, and to a future pilot that calibrates them.
+     */
+    public boolean includeCompoundChallenges = false;
 
     /** How long a pose must be held. See LivenessDetector.DEFAULT_POSE_HOLD_MS. */
     public long poseHoldMs = 600L;
@@ -60,7 +74,8 @@ public class LivenessOptions {
 
     public static LivenessOptions fromJson(String json) {
         LivenessOptions options = new LivenessOptions();
-        options.challenges = LivenessDetector.allChallenges();
+        options.challenges =
+                LivenessDetector.randomChallenges(DEFAULT_CHALLENGE_COUNT, false);
 
         if (json == null || json.isEmpty()) {
             options.overallTimeoutMs = options.resolveOverallTimeout();
@@ -100,11 +115,11 @@ public class LivenessOptions {
                 options.challenges = LivenessDetector.randomChallenges(
                         root.getInt("challengeCount"), options.includeCompoundChallenges);
             } else {
-                // Default: every challenge, in a random order. The order still varies so a
-                // recording of one session does not predict the next.
-                options.challenges = options.includeCompoundChallenges
-                        ? LivenessDetector.allChallenges()
-                        : LivenessDetector.randomChallenges(4, false);
+                // Default: four, drawn at random. With the compound challenges off that is every
+                // single-action challenge there is, and the order still varies — so a recording of
+                // one session does not predict the next.
+                options.challenges = LivenessDetector.randomChallenges(
+                        DEFAULT_CHALLENGE_COUNT, options.includeCompoundChallenges);
             }
 
             // ---- Timeouts ----

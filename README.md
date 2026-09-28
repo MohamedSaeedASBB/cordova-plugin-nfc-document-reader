@@ -314,17 +314,24 @@ window.NfcDocumentReader.checkLiveness(function (result) {
 }, { challengeCount: 2 });
 ```
 
-Options: `challenges[]`, `challengeCount`, `includeCompoundChallenges` (**true**), `poseHoldMs`
+Options: `challenges[]`, `challengeCount` (**4**), `includeCompoundChallenges` (false), `poseHoldMs`
 (600), `overallTimeoutMs` (**derived**), `perChallengeTimeoutMs` (15000), `faceSearchTimeoutMs`
 (20000), `recordVideo` (**true**), `videoBitrate` (900000), `videoTrimToChallenges` (true),
 `videoMaxDimension` (854, iOS), `videoFrameRate` (15, iOS), `videoPreferHEVC` (true, iOS),
 `maxImageDimension` (720), `maxImageBytes` (204800), `jpegQuality` (85), `cropToFace` (true),
 `includeFullFrame`, `includeChallengeFrames`, `prompts`.
 
-**By default every challenge is required** — all eight, in a random order. Pass `challengeCount`
-for fewer. The order stays shuffled even though the set is fixed: knowing which challenges are
-coming is not the same as knowing when, and a pre-recorded clip still has to match the sequence in
-the order it is asked.
+**The default is four single-action challenges** — blink, smile, turn left, turn right, which with
+the compound challenges off is every challenge there is, in a random order. Pass `challengeCount`
+for fewer.
+
+Four rather than two because four actions are materially harder to pre-record, and single-action
+rather than compound because a challenge a genuine customer cannot pass is a failed onboarding
+rather than a caught fraud.
+
+Since a draw of four from a pool of four is always the same set, **the order is the security
+property that remains** — and it does vary: all 24 orderings appear across 200 draws. A pre-recorded
+clip still has to match the sequence in the order it is asked for.
 
 `overallTimeoutMs` is derived from the work the session has to do —
 `faceSearchTimeoutMs + challenges × perChallengeTimeoutMs + 5s` — because a fixed 45 seconds was
@@ -345,10 +352,10 @@ A compound challenge passes only while both conditions hold together — turning
 not count. That is the point of them: two independent muscle groups at the same instant is the part
 a spliced or replayed clip cannot fake.
 
-**Compound challenges are off by default.** They are harder to pass and their thresholds are not yet
-calibrated against real faces, so enabling them silently would change the experience of every
-customer of an app that merely upgrades this plugin. Opt in with `includeCompoundChallenges: true`,
-which widens the random pool to all eight, or name them explicitly in `challenges`.
+**Compound challenges are off by default.** They ask the customer to hold two things at once, and
+their thresholds are not calibrated against real faces. Opt in with `includeCompoundChallenges: true`,
+which widens the random pool to all eight, or name them explicitly in `challenges`. Calibrate before
+enabling them for customers.
 
 Their off-axis thresholds (18° of turn, 0.55 smile probability, against 25° and 0.72 head-on) are
 lower because ML Kit's smile and eye-open classifiers are trained on faces looking at the camera and
@@ -363,8 +370,9 @@ own left hides your left eye, and ML Kit still reports an unreliable probability
 `includeChallengeFrames: true` returns one image per challenge — eight by default:
 
 ```js
-{ includeChallengeFrames: true }        // all eight poses
-{ challengeCount: 4 }                   // four of them, chosen at random
+{ includeChallengeFrames: true }                              // four poses, the default
+{ includeChallengeFrames: true, challengeCount: 8,
+  includeCompoundChallenges: true }                           // all eight
 ```
 
 #### Video

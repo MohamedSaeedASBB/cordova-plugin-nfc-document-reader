@@ -8,7 +8,15 @@ import UIKit
 /// breaking older native builds.
 struct LivenessOptions {
 
-    var challenges: [LivenessDetector.Challenge] = LivenessDetector.allChallenges()
+    /// How many challenges a session asks for when the caller does not say.
+    ///
+    /// Four, which with the compound challenges off is every single-action challenge there is —
+    /// blink, smile, turn left, turn right — in a random order. Four actions is materially harder
+    /// to pre-record than two while still being something a customer can do without being coached.
+    static let defaultChallengeCount = 4
+
+    var challenges: [LivenessDetector.Challenge] =
+        LivenessDetector.randomChallenges(count: LivenessOptions.defaultChallengeCount)
     /// Zero means "work it out from the challenge list" — see `resolveOverallTimeout`. A caller's
     /// explicit value always wins.
     var overallTimeoutMs: Double = 0
@@ -25,8 +33,13 @@ struct LivenessOptions {
     var includeChallengeFrames: Bool = false
 
     /// Widen the challenge pool to include the compound ones (a head turn and a smile or a blink
-    /// at the same moment). On by default: the bank asked for every challenge to be required.
-    var includeCompoundChallenges: Bool = true
+    /// at the same moment).
+    ///
+    /// Off by default. The compound challenges ask the customer to hold two things at once, their
+    /// thresholds are not calibrated against real faces, and a challenge a genuine customer cannot
+    /// pass is a failed onboarding rather than a caught fraud. They remain available to a caller
+    /// who opts in, and to a future pilot that calibrates them.
+    var includeCompoundChallenges: Bool = false
 
     /// How long a pose must be held. See LivenessDetector.defaultPoseHoldMs.
     var poseHoldMs: Double = LivenessDetector.defaultPoseHoldMs
@@ -83,11 +96,11 @@ struct LivenessOptions {
             options.challenges = LivenessDetector.randomChallenges(
                 count: count, includeCompound: options.includeCompoundChallenges)
         } else {
-            // Default: every challenge, in a random order. The order still varies so a recording
-            // of one session does not predict the next.
-            options.challenges = options.includeCompoundChallenges
-                ? LivenessDetector.allChallenges()
-                : LivenessDetector.randomChallenges(count: 4, includeCompound: false)
+            // Default: four, drawn at random. With the compound challenges off that is every
+            // single-action challenge there is, and the order still varies — so a recording of one
+            // session does not predict the next.
+            options.challenges = LivenessDetector.randomChallenges(
+                count: defaultChallengeCount, includeCompound: options.includeCompoundChallenges)
         }
 
         // ---- Timeouts ----
