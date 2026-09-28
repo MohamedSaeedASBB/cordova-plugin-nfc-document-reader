@@ -38,6 +38,7 @@ class LivenessCameraViewController: UIViewController {
     private var portraitFrame: UIImage?
     private var portraitFaceBox: CGRect?
     private var challengeFrames: [(challenge: LivenessDetector.Challenge, image: UIImage, faceBox: CGRect)] = []
+    private var videoRecorder: LivenessVideoRecorder?
 
     // UI elements
     private let topBar = UIView()
@@ -58,6 +59,9 @@ class LivenessCameraViewController: UIViewController {
         view.backgroundColor = .black
 
         detector = LivenessDetector(config: options.detectorConfig())
+        if options.recordVideo {
+            videoRecorder = LivenessVideoRecorder(options: options.videoOptions())
+        }
         faceDetector = FaceDetector.faceDetector(options: makeDetectorOptions())
 
         setupUI()
@@ -345,9 +349,40 @@ class LivenessCameraViewController: UIViewController {
         stopSession()
 
         // Already on the video queue (called from captureOutput), where the frame state lives.
-        let payload = buildResult()
+        var payload = buildResult()
         releaseFrames()
 
+        guard let recorder = videoRecorder else {
+            deliver(payload)
+            return
+        }
+        videoRecorder = nil
+
+        // finishWriting is asynchronous. A video that fails to write must never fail a liveness
+        // check that passed, so a nil result here just means the payload has no video in it.
+        recorder.finish { [weak self] output in
+            if let output = output {
+                if let data = try? Data(contentsOf: output.url) {
+                    payload["video"] = [
+                        "base64": data.base64EncodedString(),
+                        "mimeType": output.codec == "hevc" ? "video/mp4; codecs=hvc1"
+                                                           : "video/mp4; codecs=avc1",
+                        "codec": output.codec,
+                        "bytes": data.count,
+                        "durationMs": output.durationMs,
+                        "width": output.width,
+                        "height": output.height,
+                        "trimmedToChallenges": output.trimmed
+                    ]
+                }
+                // Video of a customer's face should not outlive the call that produced it.
+                LivenessVideoRecorder.discard(output.url)
+            }
+            self?.deliver(payload)
+        }
+    }
+
+    private func deliver(_ payload: [String: Any]) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.livenessCameraViewController(self, didComplete: payload)
@@ -480,6 +515,18 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
                                           timestampMs: timestampMs)
 
         let update = detector.onFrame(observation)
+
+        if let recorder = videoRecorder {
+            // The window opens as soon as the customer is being asked to do something and closes
+            // when the last challenge is done, so the recording holds the actions and not the
+            // reading time before them.
+            switch update.state {
+            case .challenge: recorder.resume()
+            case .capturing, .passed, .failed: recorder.pause()
+            default: break
+            }
+            recorder.append(sampleBuffer)
+        }
 
         if update.capturePortrait, let face = face,
            let frame = orientedImage(from: pixelBuffer) {

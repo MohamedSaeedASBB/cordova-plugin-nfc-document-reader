@@ -22,7 +22,11 @@ public class LivenessOptions {
     private static final String TAG = "LivenessOptions";
 
     public List<LivenessDetector.Challenge> challenges;
-    public long overallTimeoutMs = 45_000L;
+    /**
+     * Zero means "work it out from the challenge list" — see resolveOverallTimeout. A caller's
+     * explicit value always wins.
+     */
+    public long overallTimeoutMs = 0L;
     public long perChallengeTimeoutMs = 15_000L;
     public long faceSearchTimeoutMs = 20_000L;
 
@@ -34,18 +38,48 @@ public class LivenessOptions {
     public boolean includeFullFrame = false;
     public boolean includeChallengeFrames = false;
 
+    /**
+     * Widen the challenge pool to include the compound ones (a head turn and a smile or a blink at
+     * the same moment). On by default: the bank asked for every challenge to be required.
+     */
+    public boolean includeCompoundChallenges = true;
+
+    /** How long a pose must be held. See LivenessDetector.DEFAULT_POSE_HOLD_MS. */
+    public long poseHoldMs = 600L;
+
+    /** Record the session. On by default, at the bank's request. */
+    public boolean recordVideo = true;
+    public int videoBitrate = 900_000;
+    /**
+     * Record only the challenge windows. Most of a session is the customer reading a prompt; that
+     * footage is the bulk of the file and carries none of the evidence.
+     */
+    public boolean videoTrimToChallenges = true;
+
     private final Map<String, String> prompts = defaultPrompts();
 
     public static LivenessOptions fromJson(String json) {
         LivenessOptions options = new LivenessOptions();
-        options.challenges = LivenessDetector.randomChallenges(2);
+        options.challenges = LivenessDetector.allChallenges();
 
         if (json == null || json.isEmpty()) {
+            options.overallTimeoutMs = options.resolveOverallTimeout();
             return options;
         }
 
         try {
             JSONObject root = new JSONObject(json);
+
+            // Read before the challenge block below, because it decides what the random pool holds.
+            options.includeCompoundChallenges =
+                    root.optBoolean("includeCompoundChallenges", options.includeCompoundChallenges);
+            options.poseHoldMs = root.optLong("poseHoldMs", options.poseHoldMs);
+
+            // ---- Video ----
+            options.recordVideo = root.optBoolean("recordVideo", options.recordVideo);
+            options.videoBitrate = root.optInt("videoBitrate", options.videoBitrate);
+            options.videoTrimToChallenges =
+                    root.optBoolean("videoTrimToChallenges", options.videoTrimToChallenges);
 
             // ---- Challenges ----
             // An explicit list is honoured as given; otherwise a random subset is used, which is
@@ -63,7 +97,14 @@ public class LivenessOptions {
                     options.challenges = parsed;
                 }
             } else if (root.has("challengeCount")) {
-                options.challenges = LivenessDetector.randomChallenges(root.getInt("challengeCount"));
+                options.challenges = LivenessDetector.randomChallenges(
+                        root.getInt("challengeCount"), options.includeCompoundChallenges);
+            } else {
+                // Default: every challenge, in a random order. The order still varies so a
+                // recording of one session does not predict the next.
+                options.challenges = options.includeCompoundChallenges
+                        ? LivenessDetector.allChallenges()
+                        : LivenessDetector.randomChallenges(4, false);
             }
 
             // ---- Timeouts ----
@@ -95,7 +136,30 @@ public class LivenessOptions {
             Log.w(TAG, "Could not parse liveness options, using defaults: " + e.getMessage());
         }
 
+        options.overallTimeoutMs = options.resolveOverallTimeout();
         return options;
+    }
+
+    /**
+     * The session ceiling, derived from the work the session actually has to do.
+     *
+     * A fixed 45 seconds was fine for two challenges and is wrong for eight: the per-challenge
+     * timeouts alone can exceed it, so the overall timer would fire while the customer was still
+     * being asked for challenge five and report CHALLENGE_TIMEOUT for something they had not been
+     * given a chance to do. This is a ceiling, not an expected duration — a customer who follows
+     * the prompts finishes in a fraction of it.
+     */
+    long resolveOverallTimeout() {
+        if (overallTimeoutMs > 0) return overallTimeoutMs;     // an explicit value always wins
+        int count = challenges != null ? challenges.size() : 1;
+        return faceSearchTimeoutMs + (long) count * perChallengeTimeoutMs + 5_000L;
+    }
+
+    public LivenessVideoRecorder.Options videoOptions() {
+        LivenessVideoRecorder.Options video = new LivenessVideoRecorder.Options();
+        video.bitrate = videoBitrate;
+        video.trimToChallenges = videoTrimToChallenges;
+        return video;
     }
 
     public ImageCompressor.Options imageOptions() {
@@ -119,6 +183,10 @@ public class LivenessOptions {
             case "smile": return LivenessDetector.Challenge.SMILE;
             case "turnLeft": return LivenessDetector.Challenge.TURN_LEFT;
             case "turnRight": return LivenessDetector.Challenge.TURN_RIGHT;
+            case "turnLeftSmile": return LivenessDetector.Challenge.TURN_LEFT_SMILE;
+            case "turnRightSmile": return LivenessDetector.Challenge.TURN_RIGHT_SMILE;
+            case "turnLeftBlink": return LivenessDetector.Challenge.TURN_LEFT_BLINK;
+            case "turnRightBlink": return LivenessDetector.Challenge.TURN_RIGHT_BLINK;
             default:
                 Log.w(TAG, "Unknown challenge ignored: " + name);
                 return null;
@@ -136,6 +204,10 @@ public class LivenessOptions {
         defaults.put("smile", "Smile");
         defaults.put("turnLeft", "Slowly turn your head to your left");
         defaults.put("turnRight", "Slowly turn your head to your right");
+        defaults.put("turnLeftSmile", "Turn your head to your left and smile");
+        defaults.put("turnRightSmile", "Turn your head to your right and smile");
+        defaults.put("turnLeftBlink", "Turn your head to your left, then blink");
+        defaults.put("turnRightBlink", "Turn your head to your right, then blink");
         defaults.put("hold", "Hold still and look at the camera");
         defaults.put("success", "Done");
         defaults.put("failed", "Liveness check failed");

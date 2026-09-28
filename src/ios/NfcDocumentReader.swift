@@ -375,7 +375,8 @@ class NfcDocumentReaderWrapper {
         // DG12 - Additional Document Details
         data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
             ?? nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
-        data["dateOfIssue"] = ""
+        data["dateOfIssue"] = MrtdTextDecoder.value(
+            tag: MrtdTextDecoder.tagDateOfIssue, in: passport.getDataGroup(.DG12)?.data) ?? ""
         data["endorsementsAndObservations"] = text(MrtdTextDecoder.tagEndorsements, "")
 
         // Raw data groups, base64, only on request: a second full copy of every field and the

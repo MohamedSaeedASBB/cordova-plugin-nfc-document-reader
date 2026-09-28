@@ -314,11 +314,105 @@ window.NfcDocumentReader.checkLiveness(function (result) {
 }, { challengeCount: 2 });
 ```
 
-Options: `challenges[]`, `challengeCount` (2), `overallTimeoutMs` (45000), `perChallengeTimeoutMs`
-(15000), `faceSearchTimeoutMs` (20000), `maxImageDimension` (720), `maxImageBytes` (204800),
-`jpegQuality` (85), `cropToFace` (true), `includeFullFrame`, `includeChallengeFrames`, `prompts`.
+Options: `challenges[]`, `challengeCount`, `includeCompoundChallenges` (**true**), `poseHoldMs`
+(600), `overallTimeoutMs` (**derived**), `perChallengeTimeoutMs` (15000), `faceSearchTimeoutMs`
+(20000), `recordVideo` (**true**), `videoBitrate` (900000), `videoTrimToChallenges` (true),
+`videoMaxDimension` (854, iOS), `videoFrameRate` (15, iOS), `videoPreferHEVC` (true, iOS),
+`maxImageDimension` (720), `maxImageBytes` (204800), `jpegQuality` (85), `cropToFace` (true),
+`includeFullFrame`, `includeChallengeFrames`, `prompts`.
 
-Omit `challenges` so the sequence is random — a fixed order is replayable.
+**By default every challenge is required** — all eight, in a random order. Pass `challengeCount`
+for fewer. The order stays shuffled even though the set is fixed: knowing which challenges are
+coming is not the same as knowing when, and a pre-recorded clip still has to match the sequence in
+the order it is asked.
+
+`overallTimeoutMs` is derived from the work the session has to do —
+`faceSearchTimeoutMs + challenges × perChallengeTimeoutMs + 5s` — because a fixed 45 seconds was
+right for two challenges and would fire mid-sequence with eight. It is a ceiling, not an expected
+duration; a customer who follows the prompts finishes in a fraction of it. An explicit value always
+wins.
+
+#### Challenges
+
+Four single actions, and four compound ones that require a head turn **and** a facial action at the
+same moment:
+
+| Single | Compound |
+|---|---|
+| `blink`, `smile`, `turnLeft`, `turnRight` | `turnLeftSmile`, `turnRightSmile`, `turnLeftBlink`, `turnRightBlink` |
+
+A compound challenge passes only while both conditions hold together — turning, then smiling, does
+not count. That is the point of them: two independent muscle groups at the same instant is the part
+a spliced or replayed clip cannot fake.
+
+**Compound challenges are off by default.** They are harder to pass and their thresholds are not yet
+calibrated against real faces, so enabling them silently would change the experience of every
+customer of an app that merely upgrades this plugin. Opt in with `includeCompoundChallenges: true`,
+which widens the random pool to all eight, or name them explicitly in `challenges`.
+
+Their off-axis thresholds (18° of turn, 0.55 smile probability, against 25° and 0.72 head-on) are
+lower because ML Kit's smile and eye-open classifiers are trained on faces looking at the camera and
+both degrade as the head turns. A compound blink is judged on the **near** eye only — turning to your
+own left hides your left eye, and ML Kit still reports an unreliable probability for it.
+
+> These thresholds have not been calibrated against real faces. They are a starting point, and the
+> first sessions on a device should be watched for genuine attempts that fail.
+
+#### More pose images
+
+`includeChallengeFrames: true` returns one image per challenge — eight by default:
+
+```js
+{ includeChallengeFrames: true }        // all eight poses
+{ challengeCount: 4 }                   // four of them, chosen at random
+```
+
+#### Video
+
+The session is recorded by default and returned in `result.video`:
+
+```json
+"video": {
+  "base64": "...", "mimeType": "video/mp4; codecs=hvc1", "codec": "hevc",
+  "bytes": 214390, "durationMs": 9480, "width": 480, "height": 854,
+  "trimmedToChallenges": true
+}
+```
+
+**Only the challenge windows are recorded.** Most of a session is the customer reading a prompt;
+that footage is the bulk of the file and carries none of the evidence. The plugin knows exactly when
+each challenge began and ended, so it brackets them and stitches the result into one continuous
+clip. `videoTrimToChallenges: false` records the whole session instead.
+
+| | iOS | Android |
+|---|---|---|
+| Writer | `AVAssetWriter` fed from the frames the detector already receives | CameraX `VideoCapture` bound beside the preview and analyser |
+| Codec | **HEVC**, falling back to H.264 pre-A10 | H.264 — `Recorder` in camera-video 1.3.x does not expose the codec |
+| Resolution | `videoMaxDimension`, default 854 (480p) | `Quality.SD` (480p) |
+| Frame rate | `videoFrameRate`, default 15 | camera default |
+
+At equal quality H.264 is roughly twice the bytes of HEVC, so an Android clip is larger than an iOS
+one from the same session. The payload reports `codec` so a backend can see which it received.
+
+A recording failure never fails a liveness check that passed — the payload simply arrives without
+`video`. On Android, if the camera cannot bind preview, analysis and recording together (not every
+device can), the recording is dropped and the check continues.
+
+The temporary file is deleted as soon as its bytes are in the payload: video of a customer's face
+should not outlive the call that produced it.
+
+#### Pacing: `poseHoldMs`
+
+How long a pose must be held before it counts, on top of two consecutive qualifying frames.
+
+Before this option existed the check was **frame-count only**, which is frame-rate dependent — and
+that is why it ran visibly faster on Android than on iOS. Measured against the shipping state
+machine: a smile was accepted after **66 ms at 15fps and 16 ms at 60fps**, a fourfold difference from
+nothing but the camera's frame rate. With the 600 ms default it is 660 / 627 / 608 ms at 15 / 30 /
+60fps — the same check on every handset.
+
+Raise it to slow the check further; lower it to speed it up. Setting it to `0` restores the old
+frame-count-only behaviour, which is not recommended.
 
 ### `captureDocument(success, error, [options])`
 

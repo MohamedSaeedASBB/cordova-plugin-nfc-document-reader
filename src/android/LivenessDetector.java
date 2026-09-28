@@ -55,8 +55,38 @@ public class LivenessDetector {
      */
     private static final float YAW_SIGN_USER_LEFT = 1f;
 
+    /**
+     * Off-axis thresholds, used only by the compound challenges.
+     *
+     * ML Kit's smile and eye-open classifiers are trained on faces looking at the camera and both
+     * degrade as the head turns: at the 25 degrees a plain TURN challenge asks for, a genuine
+     * smile often scores below the 0.72 a frontal one clears. Holding the frontal thresholds for a
+     * compound challenge would mean asking the customer to do something the detector cannot see,
+     * so the turn is shallower and the smile bar lower.
+     *
+     * That is not a weaker check. A compound challenge requires two independent muscle groups at
+     * the same instant, which is the part a spliced or replayed clip cannot fake — not the
+     * magnitude of either one.
+     *
+     * These numbers have not been calibrated against real faces. They are a starting point, and
+     * they need the same on-device calibration as the face-match threshold before the compound
+     * challenges are enabled for customers.
+     */
+    private static final float COMPOUND_TURN_YAW_DEGREES = 18f;
+    private static final float COMPOUND_SMILE_PROB = 0.55f;
+
     /** Consecutive qualifying frames required to accept a sustained pose (smile, head turn). */
     private static final int POSE_CONFIRM_FRAMES = 2;
+
+    /**
+     * How long a pose must be held, in milliseconds, on top of the frame count.
+     *
+     * The frame count alone is frame-rate dependent, and that is why the check runs visibly faster
+     * on Android than on iOS: two frames is about 66ms at 30fps and about 130ms at 15fps, so the
+     * same person doing the same thing passes at different speeds on different handsets. A
+     * duration is the same everywhere, which is what makes the two platforms agree.
+     */
+    private static final long DEFAULT_POSE_HOLD_MS = 600L;
     /** Consecutive frames with >1 face before the session is abandoned. */
     private static final int MULTI_FACE_ABORT_FRAMES = 15;
     /** How long we collect neutral candidates before settling on the best portrait. */
@@ -64,7 +94,25 @@ public class LivenessDetector {
 
     // ==================== Types ====================
 
-    public enum Challenge { BLINK, SMILE, TURN_LEFT, TURN_RIGHT }
+    /**
+     * The single-action challenges, then the compound ones that require a head turn and a facial
+     * action at the same moment. A compound challenge is satisfied only while both hold together:
+     * turning, then smiling, does not pass.
+     */
+    public enum Challenge {
+        BLINK, SMILE, TURN_LEFT, TURN_RIGHT,
+        TURN_LEFT_SMILE, TURN_RIGHT_SMILE, TURN_LEFT_BLINK, TURN_RIGHT_BLINK;
+
+        public boolean isCompound() {
+            return this == TURN_LEFT_SMILE || this == TURN_RIGHT_SMILE
+                    || this == TURN_LEFT_BLINK || this == TURN_RIGHT_BLINK;
+        }
+
+        /** True when the compound challenge turns the head to the user's own left. */
+        boolean turnsUserLeft() {
+            return this == TURN_LEFT || this == TURN_LEFT_SMILE || this == TURN_LEFT_BLINK;
+        }
+    }
 
     public enum State { WAITING_FOR_FACE, CENTERING, CHALLENGE, CAPTURING, PASSED, FAILED }
 
@@ -119,6 +167,8 @@ public class LivenessDetector {
         public long overallTimeoutMs = 45_000L;
         public long perChallengeTimeoutMs = 15_000L;
         public long faceSearchTimeoutMs = 20_000L;
+        /** See DEFAULT_POSE_HOLD_MS. Raise it to slow the check down, lower it to speed it up. */
+        public long poseHoldMs = DEFAULT_POSE_HOLD_MS;
     }
 
     // ==================== Session state ====================
@@ -135,6 +185,7 @@ public class LivenessDetector {
 
     // Per-challenge progress
     private int consecutivePoseFrames = 0;
+    private long poseHoldStartMs = -1L;
     private boolean eyesWereOpen = false;
     private boolean eyesWentClosed = false;
 
@@ -159,7 +210,38 @@ public class LivenessDetector {
      * pre-recording a single clip of the expected actions in the expected order.
      */
     public static List<Challenge> randomChallenges(int count) {
-        List<Challenge> pool = new ArrayList<>(Arrays.asList(Challenge.values()));
+        return randomChallenges(count, false);
+    }
+
+    /**
+     * Every challenge, in a random order.
+     *
+     * The order is still shuffled even though the set is fixed. Knowing which challenges are
+     * coming is not the same as knowing when, and a pre-recorded clip still has to match the
+     * sequence it is actually asked for, in the order it is asked.
+     */
+    public static List<Challenge> allChallenges() {
+        List<Challenge> all = new ArrayList<>(Arrays.asList(Challenge.values()));
+        Collections.shuffle(all, new SecureRandom());
+        return all;
+    }
+
+    /**
+     * A random subset, which is what stops an attacker pre-recording the expected actions in the
+     * expected order.
+     *
+     * Compound challenges are excluded unless asked for. They are harder to pass, their thresholds
+     * are uncalibrated, and turning them on silently would change the experience of every customer
+     * of an app that upgrades this plugin without changing a line of its own code. Opting in is one
+     * flag; opting out after a wave of failed checks in a branch is not.
+     */
+    public static List<Challenge> randomChallenges(int count, boolean includeCompound) {
+        List<Challenge> pool = new ArrayList<>();
+        for (Challenge challenge : Challenge.values()) {
+            if (includeCompound || !challenge.isCompound()) {
+                pool.add(challenge);
+            }
+        }
         Collections.shuffle(pool, new SecureRandom());
         int n = Math.max(1, Math.min(count, pool.size()));
         return new ArrayList<>(pool.subList(0, n));
@@ -277,17 +359,40 @@ public class LivenessDetector {
         boolean satisfied;
         switch (current.type) {
             case BLINK:
-                satisfied = evaluateBlink(obs);
+                satisfied = evaluateBlink(obs, false, false);
                 break;
             case SMILE:
-                satisfied = sustained(isSmiling(obs));
+                satisfied = sustained(isSmiling(obs), obs);
                 break;
             case TURN_LEFT:
-                satisfied = sustained(isTurned(obs, true));
+                satisfied = sustained(isTurned(obs, true), obs);
                 break;
             case TURN_RIGHT:
-                satisfied = sustained(isTurned(obs, false));
+                satisfied = sustained(isTurned(obs, false), obs);
                 break;
+            case TURN_LEFT_SMILE:
+            case TURN_RIGHT_SMILE: {
+                boolean userLeft = current.type.turnsUserLeft();
+                // Both at once. isSmilingOffAxis drops the look-at-the-camera requirement that
+                // the plain SMILE challenge keeps, because here the head is deliberately turned.
+                satisfied = sustained(isTurnedForCompound(obs, userLeft) && isSmilingOffAxis(obs),
+                                      obs);
+                break;
+            }
+            case TURN_LEFT_BLINK:
+            case TURN_RIGHT_BLINK: {
+                boolean userLeft = current.type.turnsUserLeft();
+                if (!isTurnedForCompound(obs, userLeft)) {
+                    // The blink has to happen while turned, so losing the turn restarts the arc
+                    // rather than letting a blink from before it count.
+                    eyesWereOpen = false;
+                    eyesWentClosed = false;
+                    satisfied = false;
+                } else {
+                    satisfied = evaluateBlink(obs, true, userLeft);
+                }
+                break;
+            }
             default:
                 satisfied = false;
         }
@@ -322,9 +427,20 @@ public class LivenessDetector {
      * A blink is a transition, not a pose: we require eyes clearly open, then clearly closed,
      * then clearly open again. Requiring the full arc is what a printed photo cannot produce.
      */
-    private boolean evaluateBlink(Observation obs) {
+    private boolean evaluateBlink(Observation obs, boolean nearEyeOnly, boolean userTurnedLeft) {
         Float left = obs.leftEyeOpen;
         Float right = obs.rightEyeOpen;
+
+        if (nearEyeOnly) {
+            // A turned head hides the far eye, and ML Kit still reports a probability for it —
+            // an unreliable one. Turning to your own left rotates your left cheek away from the
+            // camera, so the eye it can still see is your right one. Judging the hidden eye is
+            // how a compound blink challenge becomes impossible to pass.
+            Float nearEye = userTurnedLeft ? right : left;
+            left = nearEye;
+            right = nearEye;
+        }
+
         if (left == null || right == null) {
             return false;
         }
@@ -347,19 +463,40 @@ public class LivenessDetector {
         return obs.smiling != null && obs.smiling > SMILE_PROB && isNeutralPose(obs);
     }
 
+    /** A smile judged on a head that is deliberately turned, so pose is not part of the test. */
+    private boolean isSmilingOffAxis(Observation obs) {
+        return obs.smiling != null && obs.smiling > COMPOUND_SMILE_PROB;
+    }
+
+    /** The shallower turn a compound challenge asks for. See COMPOUND_TURN_YAW_DEGREES. */
+    private boolean isTurnedForCompound(Observation obs, boolean userLeft) {
+        float signed = obs.yaw * YAW_SIGN_USER_LEFT * (userLeft ? 1f : -1f);
+        return signed > COMPOUND_TURN_YAW_DEGREES;
+    }
+
     private boolean isTurned(Observation obs, boolean userLeft) {
         float signed = obs.yaw * YAW_SIGN_USER_LEFT * (userLeft ? 1f : -1f);
         return signed > TURN_YAW_DEGREES;
     }
 
-    /** Sustained-pose helper: only accept after POSE_CONFIRM_FRAMES consecutive qualifying frames. */
-    private boolean sustained(boolean qualifies) {
+    /**
+     * Accept a pose only once it has been held for POSE_CONFIRM_FRAMES consecutive qualifying
+     * frames AND for config.poseHoldMs. The frame count rejects a single noisy detection; the
+     * duration is what makes a fast Android handset and an iPhone agree, because it does not
+     * depend on how many frames per second the camera happens to deliver.
+     */
+    private boolean sustained(boolean qualifies, Observation obs) {
         if (!qualifies) {
             consecutivePoseFrames = 0;
+            poseHoldStartMs = -1L;
             return false;
         }
         consecutivePoseFrames++;
-        return consecutivePoseFrames >= POSE_CONFIRM_FRAMES;
+        if (poseHoldStartMs < 0) {
+            poseHoldStartMs = obs.timestampMs;
+        }
+        long heldMs = obs.timestampMs - poseHoldStartMs;
+        return consecutivePoseFrames >= POSE_CONFIRM_FRAMES && heldMs >= config.poseHoldMs;
     }
 
     // ==================== Portrait capture ====================
@@ -434,6 +571,7 @@ public class LivenessDetector {
 
     private void resetPoseProgress() {
         consecutivePoseFrames = 0;
+        poseHoldStartMs = -1L;
         eyesWereOpen = false;
         eyesWentClosed = false;
     }
@@ -482,6 +620,10 @@ public class LivenessDetector {
             case SMILE: return "smile";
             case TURN_LEFT: return "turnLeft";
             case TURN_RIGHT: return "turnRight";
+            case TURN_LEFT_SMILE: return "turnLeftSmile";
+            case TURN_RIGHT_SMILE: return "turnRightSmile";
+            case TURN_LEFT_BLINK: return "turnLeftBlink";
+            case TURN_RIGHT_BLINK: return "turnRightBlink";
             default: return "findFace";
         }
     }

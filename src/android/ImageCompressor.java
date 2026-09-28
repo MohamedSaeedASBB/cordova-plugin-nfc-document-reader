@@ -1,6 +1,7 @@
 package com.nfcdocumentreader;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.util.Base64;
 import android.util.Log;
@@ -19,6 +20,9 @@ import java.io.ByteArrayOutputStream;
  */
 public class ImageCompressor {
 
+    /** Iterations of the quality search. Six halvings resolve the 45-92 range to about 1. */
+    private static final int QUALITY_SEARCH_STEPS = 6;
+
     private static final String TAG = "ImageCompressor";
 
     /** Quality step used when walking down towards the byte budget. */
@@ -31,6 +35,27 @@ public class ImageCompressor {
         public int maxBytes = 200 * 1024;
         public int initialQuality = 85;
         public int minQuality = 45;
+
+        /**
+         * Search for the lowest JPEG quality that still meets {@link #minPSNR}, instead of
+         * encoding at {@link #initialQuality} and only reducing if the byte budget is exceeded.
+         *
+         * A fixed quality spends the same bits on a plain background as on a detailed face, so an
+         * easy image is stored far larger than it needs to be while a hard one may be pushed below
+         * what a face matcher can use. Measuring the result and stopping at the threshold makes the
+         * <em>quality</em> the constant and lets the size fall where it falls.
+         */
+        public boolean useQualitySearch = true;
+
+        /**
+         * Peak signal-to-noise ratio, in dB, against the uncompressed bitmap. 38 dB is where JPEG
+         * artefacts stop being visible on a face at these dimensions; the usual "visually
+         * lossless" range quoted for photographs is 36-40.
+         *
+         * Below about 34 the eye and mouth detail a face matcher relies on starts to go, so that
+         * is the floor worth defending. Mirrors ImageCompressor.swift.
+         */
+        public double minPSNR = 38.0;
         /** Crop to the face box, expanded by this fraction of the box on each side. */
         public boolean cropToFace = true;
         public float faceCropPadding = 0.55f;
@@ -75,8 +100,18 @@ public class ImageCompressor {
             result.height = working.getHeight();
 
             int quality = clamp(options.initialQuality, options.minQuality, 100);
-            byte[] encoded = encode(working, quality);
+            byte[] encoded;
 
+            if (options.useQualitySearch) {
+                int[] found = searchQuality(working, options, quality);
+                quality = found[0];
+                encoded = encode(working, quality);
+            } else {
+                encoded = encode(working, quality);
+            }
+
+            // The byte budget is a hard cap and outranks the quality floor: a payload that will
+            // not fit through the backend is worse than one that is slightly soft.
             while (encoded.length > options.maxBytes && quality > options.minQuality) {
                 quality = Math.max(options.minQuality, quality - QUALITY_STEP);
                 encoded = encode(working, quality);
@@ -138,6 +173,88 @@ public class ImageCompressor {
         int width = Math.max(1, Math.round(source.getWidth() * scale));
         int height = Math.max(1, Math.round(source.getHeight() * scale));
         return Bitmap.createScaledBitmap(source, width, height, true);
+    }
+
+    /**
+     * Binary-searches for the lowest quality whose PSNR against the uncompressed bitmap still
+     * clears {@code options.minPSNR}. Six encode/measure rounds on a 720px image cost a fraction of
+     * the time the face detector has already spent on the same frame.
+     *
+     * @return a one-element array holding the chosen quality, so the caller re-encodes once rather
+     *         than this method holding several megabytes of candidates alive
+     */
+    private static int[] searchQuality(Bitmap working, Options options, int maxQuality) {
+        int[] reference = luminance(working);
+        if (reference == null) return new int[] { maxQuality };
+
+        // If even the top of the range cannot meet the floor, there is nothing to search for.
+        double bestPsnr = measurePSNR(encode(working, maxQuality), working, reference);
+        if (bestPsnr < options.minPSNR) return new int[] { maxQuality };
+
+        int low = options.minQuality;
+        int high = maxQuality;
+        int best = maxQuality;
+
+        for (int i = 0; i < QUALITY_SEARCH_STEPS && low < high; i++) {
+            int mid = (low + high) / 2;
+            if (mid <= low) break;
+            double psnr = measurePSNR(encode(working, mid), working, reference);
+            if (psnr >= options.minPSNR) {
+                best = mid;         // good enough — try smaller
+                high = mid;
+            } else {
+                low = mid;          // too lossy — back off
+            }
+        }
+        return new int[] { best };
+    }
+
+    /**
+     * PSNR on luminance. Chroma subsampling makes the colour planes a poor guide to how a JPEG
+     * looks, and luminance is what carries the features a face matcher reads.
+     */
+    private static double measurePSNR(byte[] jpeg, Bitmap reference, int[] referenceLuma) {
+        Bitmap decoded = null;
+        try {
+            decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+            if (decoded == null
+                    || decoded.getWidth() != reference.getWidth()
+                    || decoded.getHeight() != reference.getHeight()) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            int[] candidate = luminance(decoded);
+            if (candidate == null || candidate.length != referenceLuma.length) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            double squaredError = 0;
+            for (int i = 0; i < referenceLuma.length; i++) {
+                double d = referenceLuma[i] - candidate[i];
+                squaredError += d * d;
+            }
+            double mse = squaredError / referenceLuma.length;
+            if (mse <= 0) return Double.POSITIVE_INFINITY;
+            return 10 * Math.log10(255.0 * 255.0 / mse);
+        } catch (Throwable t) {
+            // A measurement failure must not fail the compression; fall back to accepting quality.
+            return Double.NEGATIVE_INFINITY;
+        } finally {
+            if (decoded != null) decoded.recycle();
+        }
+    }
+
+    /** BT.601 luma, the same weighting a JPEG encoder uses for its Y plane. */
+    private static int[] luminance(Bitmap bitmap) {
+        int width = bitmap.getWidth(), height = bitmap.getHeight();
+        if (width <= 0 || height <= 0) return null;
+        int[] pixels = new int[width * height];
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+        int[] luma = new int[pixels.length];
+        for (int i = 0; i < pixels.length; i++) {
+            int p = pixels[i];
+            int r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+            luma[i] = (299 * r + 587 * g + 114 * b) / 1000;
+        }
+        return luma;
     }
 
     private static byte[] encode(Bitmap bitmap, int quality) {

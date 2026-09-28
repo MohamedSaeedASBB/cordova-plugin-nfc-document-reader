@@ -44,8 +44,34 @@ final class LivenessDetector {
     /// frame. If the turn prompts ever read reversed on a device, this single constant is the fix.
     private static let yawSignUserLeft: Float = -1
 
+    /// Off-axis thresholds, used only by the compound challenges.
+    ///
+    /// ML Kit's smile and eye-open classifiers are trained on faces looking at the camera and both
+    /// degrade as the head turns: at the 25 degrees a plain turn challenge asks for, a genuine
+    /// smile often scores below the 0.72 a frontal one clears. Holding the frontal thresholds for
+    /// a compound challenge would mean asking the customer to do something the detector cannot
+    /// see, so the turn is shallower and the smile bar lower.
+    ///
+    /// That is not a weaker check. A compound challenge requires two independent muscle groups at
+    /// the same instant, which is the part a spliced or replayed clip cannot fake — not the
+    /// magnitude of either one.
+    ///
+    /// These numbers have not been calibrated against real faces. They are a starting point, and
+    /// they need the same on-device calibration as the face-match threshold before the compound
+    /// challenges are enabled for customers. Kept identical to LivenessDetector.java.
+    private static let compoundTurnYawDegrees: Float = 18
+    private static let compoundSmileProbability: Float = 0.55
+
     /// Consecutive qualifying frames required to accept a sustained pose (smile, head turn).
     private static let poseConfirmFrames = 2
+
+    /// How long a pose must be held, in milliseconds, on top of the frame count.
+    ///
+    /// The frame count alone is frame-rate dependent, and that is why the check runs visibly
+    /// faster on Android than here: two frames is about 66ms at 30fps and about 130ms at 15fps, so
+    /// the same person doing the same thing passes at different speeds on different handsets. A
+    /// duration is the same everywhere, which is what makes the two platforms agree.
+    static let defaultPoseHoldMs: Double = 600
     /// Consecutive frames with >1 face before the session is abandoned.
     private static let multiFaceAbortFrames = 15
     /// How long we collect neutral candidates before settling on the best portrait.
@@ -53,11 +79,33 @@ final class LivenessDetector {
 
     // MARK: - Types
 
+    /// The single-action challenges, then the compound ones that require a head turn and a facial
+    /// action at the same moment. A compound challenge is satisfied only while both hold together:
+    /// turning, then smiling, does not pass.
     enum Challenge: String, CaseIterable {
         case blink
         case smile
         case turnLeft
         case turnRight
+        case turnLeftSmile
+        case turnRightSmile
+        case turnLeftBlink
+        case turnRightBlink
+
+        var isCompound: Bool {
+            switch self {
+            case .turnLeftSmile, .turnRightSmile, .turnLeftBlink, .turnRightBlink: return true
+            default: return false
+            }
+        }
+
+        /// True when the compound challenge turns the head to the user's own left.
+        var turnsUserLeft: Bool {
+            switch self {
+            case .turnLeft, .turnLeftSmile, .turnLeftBlink: return true
+            default: return false
+            }
+        }
     }
 
     enum State {
@@ -120,6 +168,8 @@ final class LivenessDetector {
         var overallTimeoutMs: Double = 45_000
         var perChallengeTimeoutMs: Double = 15_000
         var faceSearchTimeoutMs: Double = 20_000
+        /// See `defaultPoseHoldMs`. Raise it to slow the check down, lower it to speed it up.
+        var poseHoldMs: Double = LivenessDetector.defaultPoseHoldMs
     }
 
     // MARK: - Session state
@@ -136,6 +186,7 @@ final class LivenessDetector {
 
     // Per-challenge progress
     private var consecutivePoseFrames = 0
+    private var poseHoldStartMs: Double?
     private var eyesWereOpen = false
     private var eyesWentClosed = false
 
@@ -155,8 +206,25 @@ final class LivenessDetector {
 
     /// Pick a random subset of challenges. Randomising per session is what stops an attacker
     /// pre-recording a single clip of the expected actions in the expected order.
-    static func randomChallenges(count: Int) -> [Challenge] {
-        let pool = Challenge.allCases.shuffled()
+    /// A random subset, which is what stops an attacker pre-recording the expected actions in the
+    /// expected order.
+    ///
+    /// Compound challenges are excluded unless asked for. They are harder to pass, their
+    /// thresholds are uncalibrated, and turning them on silently would change the experience of
+    /// every customer of an app that upgrades this plugin without changing a line of its own code.
+    /// Every challenge, in a random order.
+    ///
+    /// The order is still shuffled even though the set is fixed. Knowing which challenges are
+    /// coming is not the same as knowing when, and a pre-recorded clip has to match the sequence
+    /// it is actually asked for.
+    static func allChallenges() -> [Challenge] {
+        return Challenge.allCases.shuffled()
+    }
+
+    static func randomChallenges(count: Int, includeCompound: Bool = false) -> [Challenge] {
+        let pool = Challenge.allCases
+            .filter { includeCompound || !$0.isCompound }
+            .shuffled()
         let n = max(1, min(count, pool.count))
         return Array(pool.prefix(n))
     }
@@ -279,11 +347,28 @@ final class LivenessDetector {
         case .blink:
             satisfied = evaluateBlink(obs)
         case .smile:
-            satisfied = sustained(isSmiling(obs))
+            satisfied = sustained(isSmiling(obs), obs)
         case .turnLeft:
-            satisfied = sustained(isTurned(obs, userLeft: true))
+            satisfied = sustained(isTurned(obs, userLeft: true), obs)
         case .turnRight:
-            satisfied = sustained(isTurned(obs, userLeft: false))
+            satisfied = sustained(isTurned(obs, userLeft: false), obs)
+        case .turnLeftSmile, .turnRightSmile:
+            // Both at once. isSmilingOffAxis drops the look-at-the-camera requirement that the
+            // plain smile challenge keeps, because here the head is deliberately turned.
+            satisfied = sustained(
+                isTurnedForCompound(obs, userLeft: current.type.turnsUserLeft)
+                    && isSmilingOffAxis(obs), obs)
+        case .turnLeftBlink, .turnRightBlink:
+            let userLeft = current.type.turnsUserLeft
+            if !isTurnedForCompound(obs, userLeft: userLeft) {
+                // The blink has to happen while turned, so losing the turn restarts the arc rather
+                // than letting a blink from before it count.
+                eyesWereOpen = false
+                eyesWentClosed = false
+                satisfied = false
+            } else {
+                satisfied = evaluateBlink(obs, nearEyeOnly: true, userTurnedLeft: userLeft)
+            }
         }
 
         if !satisfied {
@@ -314,8 +399,22 @@ final class LivenessDetector {
 
     /// A blink is a transition, not a pose: we require eyes clearly open, then clearly closed,
     /// then clearly open again. Requiring the full arc is what a printed photo cannot produce.
-    private func evaluateBlink(_ obs: Observation) -> Bool {
-        guard let left = obs.leftEyeOpen, let right = obs.rightEyeOpen else {
+    private func evaluateBlink(_ obs: Observation, nearEyeOnly: Bool = false,
+                               userTurnedLeft: Bool = false) -> Bool {
+        var left = obs.leftEyeOpen
+        var right = obs.rightEyeOpen
+
+        if nearEyeOnly {
+            // A turned head hides the far eye, and ML Kit still reports a probability for it — an
+            // unreliable one. Turning to your own left rotates your left cheek away from the
+            // camera, so the eye it can still see is your right one. Judging the hidden eye is how
+            // a compound blink challenge becomes impossible to pass.
+            let nearEye = userTurnedLeft ? right : left
+            left = nearEye
+            right = nearEye
+        }
+
+        guard let left = left, let right = right else {
             return false
         }
 
@@ -343,14 +442,34 @@ final class LivenessDetector {
         return signed > Self.turnYawDegrees
     }
 
-    /// Sustained-pose helper: only accept after `poseConfirmFrames` consecutive qualifying frames.
-    private func sustained(_ qualifies: Bool) -> Bool {
+    /// A smile judged on a head that is deliberately turned, so pose is not part of the test.
+    private func isSmilingOffAxis(_ obs: Observation) -> Bool {
+        guard let smiling = obs.smiling else { return false }
+        return smiling > Self.compoundSmileProbability
+    }
+
+    /// The shallower turn a compound challenge asks for. See `compoundTurnYawDegrees`.
+    private func isTurnedForCompound(_ obs: Observation, userLeft: Bool) -> Bool {
+        let signed = obs.yaw * Self.yawSignUserLeft * (userLeft ? 1 : -1)
+        return signed > Self.compoundTurnYawDegrees
+    }
+
+    /// Accept a pose only once it has been held for `poseConfirmFrames` consecutive qualifying
+    /// frames AND for `config.poseHoldMs`. The frame count rejects a single noisy detection; the
+    /// duration is what makes a fast Android handset and an iPhone agree, because it does not
+    /// depend on how many frames per second the camera happens to deliver.
+    private func sustained(_ qualifies: Bool, _ obs: Observation) -> Bool {
         guard qualifies else {
             consecutivePoseFrames = 0
+            poseHoldStartMs = nil
             return false
         }
         consecutivePoseFrames += 1
-        return consecutivePoseFrames >= Self.poseConfirmFrames
+        if poseHoldStartMs == nil {
+            poseHoldStartMs = obs.timestampMs
+        }
+        let heldMs = obs.timestampMs - (poseHoldStartMs ?? obs.timestampMs)
+        return consecutivePoseFrames >= Self.poseConfirmFrames && heldMs >= config.poseHoldMs
     }
 
     // MARK: - Portrait capture
@@ -423,6 +542,7 @@ final class LivenessDetector {
 
     private func resetPoseProgress() {
         consecutivePoseFrames = 0
+        poseHoldStartMs = nil
         eyesWereOpen = false
         eyesWentClosed = false
     }

