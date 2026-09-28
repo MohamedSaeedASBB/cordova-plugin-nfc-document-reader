@@ -266,11 +266,24 @@ var NfcDocumentReader = {
      * @param {Function} success - Called with the liveness result
      * @param {Function} error - Called with a user-facing failure message
      * @param {Object} [options]
-     * @param {string[]} [options.challenges] - Explicit sequence: "blink", "smile", "turnLeft", "turnRight".
+     * @param {string[]} [options.challenges] - Explicit sequence. Single-action: "blink", "smile",
+     *   "turnLeft", "turnRight". Compound (a turn held together with a facial action):
+     *   "turnLeftSmile", "turnRightSmile", "turnLeftBlink", "turnRightBlink".
      *                                          Omit to get a random subset (recommended — a fixed
      *                                          order is replayable).
-     * @param {number} [options.challengeCount=2] - How many random challenges when none are listed
-     * @param {number} [options.overallTimeoutMs=45000]
+     * @param {number} [options.challengeCount=4] - How many random challenges when none are listed.
+     *   With compounds off the pool is four, so the default draws all of them and it is the order
+     *   that varies between sessions.
+     * @param {boolean} [options.includeCompoundChallenges=false] - Widen the random pool to the four
+     *   compound challenges as well. Off because their thresholds are not calibrated against real
+     *   faces: a challenge a genuine customer cannot pass is a failed onboarding, not a caught fraud.
+     * @param {number} [options.poseHoldMs=600] - How long a pose must be held before it counts, on
+     *   top of two consecutive qualifying frames. A duration rather than a frame count, because a
+     *   frame count is frame-rate dependent — the same smile was accepted after 66ms at 15fps and
+     *   16ms at 60fps before this existed. Set 0 to restore that, which is not recommended.
+     * @param {number} [options.overallTimeoutMs] - Session ceiling. Derived when omitted, from
+     *   faceSearchTimeoutMs + challenges x perChallengeTimeoutMs + 5s, so it tracks the challenge
+     *   count instead of firing mid-sequence. An explicit value always wins.
      * @param {number} [options.perChallengeTimeoutMs=15000]
      * @param {number} [options.faceSearchTimeoutMs=20000]
      * @param {number} [options.maxImageDimension=720] - Long edge of the returned image, in pixels
@@ -279,7 +292,17 @@ var NfcDocumentReader = {
      * @param {boolean} [options.cropToFace=true] - Crop to the face (with padding) rather than the full frame
      * @param {boolean} [options.includeFullFrame=false] - Also return the uncropped frame
      * @param {boolean} [options.includeChallengeFrames=false] - Also return one frame per challenge
-     * @param {Object} [options.prompts] - Override on-screen copy, e.g. { blink: "...", smile: "..." }
+     * @param {boolean} [options.recordVideo=true] - Record the session and return it in result.video
+     * @param {boolean} [options.videoTrimToChallenges=true] - Record only the challenge windows. Most
+     *   of a session is the customer reading a prompt: the bulk of the file, none of the evidence.
+     * @param {number} [options.videoBitrate=900000] - Target bitrate in bits per second
+     * @param {number} [options.videoMaxDimension=854] - iOS only; Android uses CameraX Quality.SD
+     * @param {number} [options.videoFrameRate=15] - iOS only
+     * @param {boolean} [options.videoPreferHEVC=true] - iOS only. Android records H.264 regardless,
+     *   because CameraX's Recorder does not expose the codec; result.video.codec says which you got.
+     * @param {Object} [options.prompts] - Override on-screen copy, e.g. { blink: "...", smile: "..." }.
+     *   Keys: findFace, center, tooFar, tooClose, multipleFaces, blink, smile, turnLeft, turnRight,
+     *   turnLeftSmile, turnRightSmile, turnLeftBlink, turnRightBlink, hold, success, failed, hint.
      */
     checkLiveness: function(success, error, options) {
         exec(success, error, SERVICE_NAME, 'checkLiveness', [options || {}]);
