@@ -59,6 +59,9 @@ class LivenessCameraViewController: UIViewController {
     private enum FaceBoxSpace { case portrait, landscape }
     private var faceBoxSpace: FaceBoxSpace?
 
+    /// Whether ML Kit ever supplied a y euler angle this session. See `makeObservation`.
+    private var yawEverReported = false
+
     // UI elements
     private let topBar = UIView()
     private let titleLabel = UILabel()
@@ -501,7 +504,8 @@ class LivenessCameraViewController: UIViewController {
                 // where they are large means it did, and the sign is inverted for this platform.
                 "maxYawObserved": (detector.maxYawObserved * 10).rounded() / 10,
                 "minYawObserved": (detector.minYawObserved * 10).rounded() / 10,
-                "faceBoxSpace": faceBoxSpace == .landscape ? "landscape" : "portrait"
+                "faceBoxSpace": faceBoxSpace == .landscape ? "landscape" : "portrait",
+                "yawAvailable": yawEverReported
             ]
         }
 
@@ -536,16 +540,25 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
               let faceDetector = faceDetector,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let visionImage = VisionImage(buffer: sampleBuffer)
-        // Portrait device + front camera + un-mirrored buffer: this is the mapping ML Kit's own
-        // front-camera samples use.
+        // ML Kit is handed an image that is already upright, rather than a landscape buffer plus
+        // an orientation to apply.
         //
-        // What ML Kit then does with it was assumed for a long time and turned out to be wrong.
-        // The assumption — that it rotates and mirrors the image before reporting — produced both
-        // a transposed face box and an inverted yaw sign, and cost two rounds of device testing.
-        // Neither is assumed now: `normalisedFaceBox` observes which space the boxes arrive in and
-        // derives the sign from the same evidence.
-        visionImage.orientation = .leftMirrored
+        // Passing the raw buffer with `.leftMirrored` left it ambiguous whether ML Kit rotated
+        // before measuring, and everything it reports is defined relative to "the image being
+        // processed". Guessing wrong does not fail loudly — it quietly reinterprets every result:
+        //
+        //   · face.frame comes back transposed, so centring is measured on the wrong axis
+        //   · a left/right head turn becomes a rotation about the image's HORIZONTAL axis, so it
+        //     lands in headEulerAngleX and headEulerAngleY barely moves. isNeutralPose survives
+        //     that because it takes abs(yaw) of a number near zero, so smile keeps working while
+        //     every turn challenge silently becomes impossible.
+        //
+        // Both of those were shipped, and each was patched as its own defect before the shared
+        // cause was clear. An upright image removes the question: the axes mean what the ML Kit
+        // header says they mean, and iOS matches Android, where this was never ambiguous because
+        // CameraX hands the analyser a rotation-corrected frame.
+        guard let upright = orientedImage(from: pixelBuffer) else { return }
+        let visionImage = VisionImage(image: upright)
 
         let faces: [Face]
         do {
@@ -556,10 +569,9 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             return
         }
 
-        // With .leftMirrored the reported coordinates are in the rotated (portrait) space, so
-        // the axes swap relative to the raw buffer.
-        let frameWidth = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-        let frameHeight = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+        // The image ML Kit measured, so the coordinates need no reinterpretation.
+        let frameWidth = upright.size.width
+        let frameHeight = upright.size.height
 
         let timestampMs = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000
         lastFrameTimestampMs = timestampMs
@@ -599,15 +611,16 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             normalisedFaceBox($0.frame, frameWidth: frameWidth, frameHeight: frameHeight)
         }
 
-        if update.capturePortrait, let faceBox = faceBox,
-           let frame = orientedImage(from: pixelBuffer) {
-            portraitFrame = frame
+        // Reuses the frame already rendered for detection. Capture frames used to render it a
+        // second and third time, so this is cheaper on exactly the frames that were most expensive.
+        if update.capturePortrait, let faceBox = faceBox {
+            portraitFrame = upright
             portraitFaceBox = faceBox
         }
 
         if let challenge = update.captureChallengeFrame, options.includeChallengeFrames,
-           let faceBox = faceBox, let frame = orientedImage(from: pixelBuffer) {
-            challengeFrames.append((challenge: challenge, image: frame, faceBox: faceBox))
+           let faceBox = faceBox {
+            challengeFrames.append((challenge: challenge, image: upright, faceBox: faceBox))
         }
 
         render(update)
@@ -650,6 +663,11 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
         obs.centerOffsetX = Float(box.midX / frameWidth) - target.x
         obs.centerOffsetY = Float(box.midY / frameHeight) - target.y
 
+        // Recorded because a missing angle is indistinguishable from a head that never turned:
+        // obs.yaw stays 0, isNeutralPose keeps passing on abs(0), and only the turn challenges
+        // fail. That is precisely the shape of the defect this release fixes, so the payload now
+        // says outright whether ML Kit supplied the angle at all.
+        yawEverReported = yawEverReported || face.hasHeadEulerAngleY
         if face.hasHeadEulerAngleY { obs.yaw = Float(face.headEulerAngleY) }
         if face.hasHeadEulerAngleX { obs.pitch = Float(face.headEulerAngleX) }
         if face.hasHeadEulerAngleZ { obs.roll = Float(face.headEulerAngleZ) }
@@ -682,16 +700,18 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             let widerThanTall = box.width > box.height
             faceBoxSpace = (outsidePortrait || widerThanTall) ? .landscape : .portrait
 
-            // The same evidence settles the yaw sign. Both the transpose and the sign were derived
-            // from one assumption: that ML Kit applies the .leftMirrored orientation it is handed.
-            // Boxes arriving in the raw landscape space say it did not — so it did not mirror
-            // either, and yaw runs the same way it does on Android.
+            // ML Kit is now given an upright image, so portrait is the only answer this should
+            // ever produce. It is kept as a guard rather than deleted: if it ever reports
+            // landscape, the orientation handling has regressed and the log says so before the
+            // turn challenges silently stop working again.
             //
-            // This is what breaks the turn challenges while leaving smile working: every
-            // sign-independent use of yaw goes through abs(), and only isTurned reads the sign.
+            // The sign follows from the image being mirrored. orientedImage bakes in
+            // .leftMirrored, so the customer's own left appears on the image's left, and a turn to
+            // their left moves the face towards the image's left — negative y euler. Android is
+            // +1 because CameraX hands it an unmirrored frame.
             let yawSign: Float = faceBoxSpace == .portrait
-                ? LivenessDetector.defaultYawSignUserLeft      // -1, mirrored as assumed
-                : 1                                            // +1, as on Android
+                ? LivenessDetector.defaultYawSignUserLeft      // -1, the image is mirrored
+                : 1
             detector?.setYawSignUserLeft(yawSign)
 
             NSLog("[Liveness] ML Kit face boxes read as %@ space, yaw sign %.0f "
@@ -704,8 +724,19 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
         return CGRect(x: box.minY, y: box.minX, width: box.height, height: box.width)
     }
 
-    /// Renders the frame into the same coordinate space ML Kit reported face boxes in, so the
-    /// crop lines up. `ImageCompressor` flips the final output back to true orientation.
+    /// Renders the frame upright, in the coordinate space ML Kit then measures and the crops are
+    /// taken from. `ImageCompressor` flips the final output back to true orientation.
+    ///
+    /// COST
+    /// This now runs on every analysed frame, not only on the ones that get captured, because the
+    /// detector is handed the rendered image rather than the raw buffer. Android pays nothing
+    /// equivalent — `InputImage.fromMediaImage` takes the buffer and a rotation, with no render.
+    /// It is two rasterisations per frame at the preset's full size.
+    ///
+    /// If a device drops frames because of it, the lever is to render at half size for detection
+    /// and scale the face box back up; the box is in this image's space, so that stays exact. It
+    /// is not done pre-emptively because dropping resolution costs eye-open probability, and the
+    /// blink challenge is the one that depends on it. Measure before trading it away.
     private func orientedImage(from pixelBuffer: CVPixelBuffer) -> UIImage? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
