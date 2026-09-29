@@ -42,7 +42,15 @@ final class LivenessDetector {
     ///
     /// LivenessDetector.java uses +1, because CameraX hands the analyser an un-mirrored sensor
     /// frame. If the turn prompts ever read reversed on a device, this single constant is the fix.
-    private static let yawSignUserLeft: Float = -1
+    static let defaultYawSignUserLeft: Float = -1
+
+    /// How far the face may sit from the guide while a turn is being asked for.
+    ///
+    /// Turning your head moves your face: the nose swings sideways and the far cheek disappears, so
+    /// the box both shifts and narrows. Holding it to the same tolerance as a head-on pose asks the
+    /// customer to turn without turning, and every frame that trips the gate resets the pose
+    /// progress they had built up. Wider, but still bounded, so a face leaving the frame is caught.
+    private static let turningCenterOffset: Float = 0.34
 
     /// Off-axis thresholds, used only by the compound challenges.
     ///
@@ -170,11 +178,27 @@ final class LivenessDetector {
         var faceSearchTimeoutMs: Double = 20_000
         /// See `defaultPoseHoldMs`. Raise it to slow the check down, lower it to speed it up.
         var poseHoldMs: Double = LivenessDetector.defaultPoseHoldMs
+        /// Sign of ML Kit's reported yaw that means the user turned their own head LEFT.
+        ///
+        /// Not a constant, because on iOS it depends on whether ML Kit applied the mirrored
+        /// orientation it was handed — which is not knowable before the first frame arrives. See
+        /// `LivenessCameraViewController.faceBoxSpace`.
+        var yawSignUserLeft: Float = LivenessDetector.defaultYawSignUserLeft
     }
 
     // MARK: - Session state
 
-    private let config: Config
+    private var config: Config
+
+    /// Set once the camera has established which way ML Kit reports yaw. See `Config`.
+    func setYawSignUserLeft(_ sign: Float) {
+        config.yawSignUserLeft = sign
+    }
+
+    /// The largest turn seen this session, in each direction, as ML Kit reported it. Reported so a
+    /// failed turn challenge can be diagnosed from the payload rather than from a cable.
+    private(set) var maxYawObserved: Float = 0
+    private(set) var minYawObserved: Float = 0
     private(set) var results: [ChallengeResult]
 
     private(set) var state: State = .waitingForFace
@@ -248,6 +272,8 @@ final class LivenessDetector {
         }
 
         framesAnalysed += 1
+        maxYawObserved = max(maxYawObserved, obs.yaw)
+        minYawObserved = min(minYawObserved, obs.yaw)
         if sessionStartMs == nil {
             sessionStartMs = obs.timestampMs
             stateEnteredMs = obs.timestampMs
@@ -307,7 +333,8 @@ final class LivenessDetector {
             resetPoseProgress()
             return framingProgress("tooClose", obs)
         }
-        if abs(obs.centerOffsetX) > Self.maxCenterOffset || abs(obs.centerOffsetY) > Self.maxCenterOffset {
+        let centerTolerance = askingForATurn() ? Self.turningCenterOffset : Self.maxCenterOffset
+        if abs(obs.centerOffsetX) > centerTolerance || abs(obs.centerOffsetY) > centerTolerance {
             resetPoseProgress()
             return framingProgress("center", obs)
         }
@@ -438,8 +465,17 @@ final class LivenessDetector {
     }
 
     private func isTurned(_ obs: Observation, userLeft: Bool) -> Bool {
-        let signed = obs.yaw * Self.yawSignUserLeft * (userLeft ? 1 : -1)
+        let signed = obs.yaw * config.yawSignUserLeft * (userLeft ? 1 : -1)
         return signed > Self.turnYawDegrees
+    }
+
+    /// True while the current challenge asks the customer to turn their head.
+    private func askingForATurn() -> Bool {
+        guard state == .challenge, challengeIndex < results.count else { return false }
+        switch results[challengeIndex].type {
+        case .blink, .smile: return false
+        default: return true
+        }
     }
 
     /// A smile judged on a head that is deliberately turned, so pose is not part of the test.
@@ -450,7 +486,7 @@ final class LivenessDetector {
 
     /// The shallower turn a compound challenge asks for. See `compoundTurnYawDegrees`.
     private func isTurnedForCompound(_ obs: Observation, userLeft: Bool) -> Bool {
-        let signed = obs.yaw * Self.yawSignUserLeft * (userLeft ? 1 : -1)
+        let signed = obs.yaw * config.yawSignUserLeft * (userLeft ? 1 : -1)
         return signed > Self.compoundTurnYawDegrees
     }
 
