@@ -36,12 +36,16 @@ final class LivenessDetector {
     /// Sign of ML Kit's `headEulerAngleY` that corresponds to the user turning their own head LEFT.
     ///
     /// ML Kit documents positive euler Y as "the face turns toward the right side of the image
-    /// being processed". `LivenessCameraViewController` hands ML Kit a `.leftMirrored` image —
-    /// the orientation ML Kit's own front-camera samples use — so the image is mirrored and its
-    /// right-hand side is the user's own right. Hence -1 here.
+    /// being processed", so the sign depends on whether ML Kit mirrored the image before measuring.
     ///
-    /// LivenessDetector.java uses +1, because CameraX hands the analyser an un-mirrored sensor
-    /// frame. If the turn prompts ever read reversed on a device, this single constant is the fix.
+    /// This is only the starting value. `LivenessCameraViewController` replaces it once the first
+    /// face arrives, from the same observation that settles the face-box coordinate space: boxes in
+    /// the raw landscape space mean ML Kit applied neither the rotation nor the mirror, so yaw runs
+    /// as it does on Android and the sign is +1.
+    ///
+    /// It was a constant, and being a constant was the bug — a wrong sign turned every turn
+    /// challenge into one the customer could only pass by turning the other way, while smile kept
+    /// working because every other use of yaw goes through abs().
     static let defaultYawSignUserLeft: Float = -1
 
     /// How far the face may sit from the guide while a turn is being asked for.
