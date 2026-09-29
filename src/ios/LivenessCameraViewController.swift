@@ -538,8 +538,13 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
 
         let visionImage = VisionImage(buffer: sampleBuffer)
         // Portrait device + front camera + un-mirrored buffer: this is the mapping ML Kit's own
-        // front-camera samples use. It means ML Kit sees a mirrored image, which is why
-        // LivenessDetector.yawSignUserLeft is negative on iOS.
+        // front-camera samples use.
+        //
+        // What ML Kit then does with it was assumed for a long time and turned out to be wrong.
+        // The assumption — that it rotates and mirrors the image before reporting — produced both
+        // a transposed face box and an inverted yaw sign, and cost two rounds of device testing.
+        // Neither is assumed now: `normalisedFaceBox` observes which space the boxes arrive in and
+        // derives the sign from the same evidence.
         visionImage.orientation = .leftMirrored
 
         let faces: [Face]
