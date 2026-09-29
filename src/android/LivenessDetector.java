@@ -53,7 +53,17 @@ public class LivenessDetector {
      * (.leftMirrored, the orientation ML Kit's own front-camera samples use). If the turn
      * prompts ever read reversed on a device, this single constant is the fix.
      */
-    private static final float YAW_SIGN_USER_LEFT = 1f;
+    public static final float DEFAULT_YAW_SIGN_USER_LEFT = 1f;
+
+    /**
+     * How far the face may sit from the guide while a turn is being asked for.
+     *
+     * Turning your head moves your face: the nose swings sideways and the far cheek disappears, so
+     * the box both shifts and narrows. Holding it to the same tolerance as a head-on pose asks the
+     * customer to turn without turning, and every frame that trips the gate resets the pose
+     * progress they had built up. Wider, but still bounded, so a face leaving the frame is caught.
+     */
+    private static final float TURNING_CENTER_OFFSET = 0.34f;
 
     /**
      * Off-axis thresholds, used only by the compound challenges.
@@ -169,6 +179,14 @@ public class LivenessDetector {
         public long faceSearchTimeoutMs = 20_000L;
         /** See DEFAULT_POSE_HOLD_MS. Raise it to slow the check down, lower it to speed it up. */
         public long poseHoldMs = DEFAULT_POSE_HOLD_MS;
+        /**
+         * Sign of the platform's reported yaw that means the user turned their own head LEFT.
+         *
+         * A constant until iOS proved it is not one: the value depends on whether the vision
+         * library was handed a mirrored image, which on iOS is not knowable before the first frame.
+         * See LivenessCameraViewController.swift.
+         */
+        public float yawSignUserLeft = DEFAULT_YAW_SIGN_USER_LEFT;
     }
 
     // ==================== Session state ====================
@@ -185,6 +203,8 @@ public class LivenessDetector {
 
     // Per-challenge progress
     private int consecutivePoseFrames = 0;
+    private float maxYawObserved = 0f;
+    private float minYawObserved = 0f;
     private long poseHoldStartMs = -1L;
     private boolean eyesWereOpen = false;
     private boolean eyesWentClosed = false;
@@ -261,6 +281,8 @@ public class LivenessDetector {
         }
 
         framesAnalysed++;
+        if (obs.yaw > maxYawObserved) maxYawObserved = obs.yaw;
+        if (obs.yaw < minYawObserved) minYawObserved = obs.yaw;
         if (sessionStartMs < 0) {
             sessionStartMs = obs.timestampMs;
             stateEnteredMs = obs.timestampMs;
@@ -319,8 +341,9 @@ public class LivenessDetector {
             resetPoseProgress();
             return framingProgress(update, "tooClose", obs);
         }
-        if (Math.abs(obs.centerOffsetX) > MAX_CENTER_OFFSET
-                || Math.abs(obs.centerOffsetY) > MAX_CENTER_OFFSET) {
+        float centerTolerance = askingForATurn() ? TURNING_CENTER_OFFSET : MAX_CENTER_OFFSET;
+        if (Math.abs(obs.centerOffsetX) > centerTolerance
+                || Math.abs(obs.centerOffsetY) > centerTolerance) {
             resetPoseProgress();
             return framingProgress(update, "center", obs);
         }
@@ -470,14 +493,32 @@ public class LivenessDetector {
 
     /** The shallower turn a compound challenge asks for. See COMPOUND_TURN_YAW_DEGREES. */
     private boolean isTurnedForCompound(Observation obs, boolean userLeft) {
-        float signed = obs.yaw * YAW_SIGN_USER_LEFT * (userLeft ? 1f : -1f);
+        float signed = obs.yaw * config.yawSignUserLeft * (userLeft ? 1f : -1f);
         return signed > COMPOUND_TURN_YAW_DEGREES;
     }
 
     private boolean isTurned(Observation obs, boolean userLeft) {
-        float signed = obs.yaw * YAW_SIGN_USER_LEFT * (userLeft ? 1f : -1f);
+        float signed = obs.yaw * config.yawSignUserLeft * (userLeft ? 1f : -1f);
         return signed > TURN_YAW_DEGREES;
     }
+
+    /** True while the current challenge asks the customer to turn their head. */
+    private boolean askingForATurn() {
+        if (state != State.CHALLENGE || challengeIndex >= results.size()) return false;
+        Challenge current = results.get(challengeIndex).type;
+        return current != Challenge.BLINK && current != Challenge.SMILE;
+    }
+
+    /**
+     * The largest turn seen this session, in each direction, as the platform reported it.
+     *
+     * Reported so a turn challenge that fails can be diagnosed from the payload rather than from a
+     * cable. A session where the customer plainly turned but the values stayed near zero means the
+     * angle is not reaching the detector; one where they are large but the challenge still failed
+     * means the sign is inverted for this platform.
+     */
+    public float getMaxYawObserved() { return maxYawObserved; }
+    public float getMinYawObserved() { return minYawObserved; }
 
     /**
      * Accept a pose only once it has been held for POSE_CONFIRM_FRAMES consecutive qualifying

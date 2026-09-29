@@ -495,7 +495,13 @@ class LivenessCameraViewController: UIViewController {
                 "framesAnalysed": detector.framesAnalysed,
                 "durationMs": Int(detector.elapsedMs(now: lastFrameTimestampMs)),
                 "multiFaceFrames": detector.multiFaceFrames,
-                "trackingIdChanges": detector.trackingIdChanges
+                "trackingIdChanges": detector.trackingIdChanges,
+                // The largest turn seen, each way, as ML Kit reported it. A failed turn challenge
+                // where these stayed near zero means the angle never reached the detector; one
+                // where they are large means it did, and the sign is inverted for this platform.
+                "maxYawObserved": (detector.maxYawObserved * 10).rounded() / 10,
+                "minYawObserved": (detector.minYawObserved * 10).rounded() / 10,
+                "faceBoxSpace": faceBoxSpace == .landscape ? "landscape" : "portrait"
             ]
         }
 
@@ -670,10 +676,24 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             let outsidePortrait = box.maxX > frameWidth + 1 || box.maxY > frameHeight + 1
             let widerThanTall = box.width > box.height
             faceBoxSpace = (outsidePortrait || widerThanTall) ? .landscape : .portrait
-            NSLog("[Liveness] ML Kit face boxes read as %@ space "
+
+            // The same evidence settles the yaw sign. Both the transpose and the sign were derived
+            // from one assumption: that ML Kit applies the .leftMirrored orientation it is handed.
+            // Boxes arriving in the raw landscape space say it did not — so it did not mirror
+            // either, and yaw runs the same way it does on Android.
+            //
+            // This is what breaks the turn challenges while leaving smile working: every
+            // sign-independent use of yaw goes through abs(), and only isTurned reads the sign.
+            let yawSign: Float = faceBoxSpace == .portrait
+                ? LivenessDetector.defaultYawSignUserLeft      // -1, mirrored as assumed
+                : 1                                            // +1, as on Android
+            detector?.setYawSignUserLeft(yawSign)
+
+            NSLog("[Liveness] ML Kit face boxes read as %@ space, yaw sign %.0f "
                   + "(box %.0fx%.0f at %.0f,%.0f in a %.0fx%.0f portrait frame)",
                   faceBoxSpace == .portrait ? "portrait" : "LANDSCAPE, transposing",
-                  box.width, box.height, box.minX, box.minY, frameWidth, frameHeight)
+                  Double(yawSign), box.width, box.height, box.minX, box.minY,
+                  frameWidth, frameHeight)
         }
         guard faceBoxSpace == .landscape else { return box }
         return CGRect(x: box.minY, y: box.minX, width: box.height, height: box.width)

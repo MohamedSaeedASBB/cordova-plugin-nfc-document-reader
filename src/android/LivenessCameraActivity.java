@@ -536,6 +536,11 @@ public class LivenessCameraActivity extends AppCompatActivity {
         }
     }
 
+    /** One decimal place: these are diagnostics, not measurements. */
+    private static double round(float value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
     private JSONObject buildResult() throws JSONException {
         JSONObject result = new JSONObject();
         result.put("passed", true);
@@ -596,6 +601,11 @@ public class LivenessCameraActivity extends AppCompatActivity {
         signals.put("durationMs", detector.getElapsedMs(SystemClock.elapsedRealtime()));
         signals.put("multiFaceFrames", detector.getMultiFaceFrames());
         signals.put("trackingIdChanges", detector.getTrackingIdChanges());
+        // The largest turn seen, each way, as the platform reported it. A failed turn challenge
+        // where these stayed near zero means the angle never reached the detector; one where they
+        // are large means it did, and the sign is inverted for this platform.
+        signals.put("maxYawObserved", round(detector.getMaxYawObserved()));
+        signals.put("minYawObserved", round(detector.getMinYawObserved()));
         result.put("signals", signals);
 
         JSONObject sdk = new JSONObject();
