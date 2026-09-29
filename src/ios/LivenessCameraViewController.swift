@@ -40,6 +40,25 @@ class LivenessCameraViewController: UIViewController {
     private var challengeFrames: [(challenge: LivenessDetector.Challenge, image: UIImage, faceBox: CGRect)] = []
     private var videoRecorder: LivenessVideoRecorder?
 
+    /// Where the guide oval sits, in normalised frame coordinates, and how big it is.
+    ///
+    /// The framing check has to be measured against the oval the customer is actually looking at,
+    /// not against the centre of the camera frame. Those were not the same thing: the oval is
+    /// pinned above centre, the check asked for the frame centre, and the gap between them is a
+    /// customer holding their face inside the oval while the screen tells them to centre it.
+    ///
+    /// Written on the main thread in viewDidLayoutSubviews, read on the video queue.
+    private var guideTarget = (x: Float(0.5), y: Float(0.5))
+    private let guideTargetLock = NSLock()
+
+    /// The frame size in portrait terms. Seeded from the session preset and replaced by what the
+    /// first buffer actually measures, so changing the preset cannot silently move the target.
+    private var portraitFrameSize = CGSize(width: 720, height: 1280)
+
+    /// Which coordinate space ML Kit reports face boxes in. See `normalisedFaceBox`.
+    private enum FaceBoxSpace { case portrait, landscape }
+    private var faceBoxSpace: FaceBoxSpace?
+
     // UI elements
     private let topBar = UIView()
     private let titleLabel = UILabel()
@@ -73,6 +92,33 @@ class LivenessCameraViewController: UIViewController {
         previewLayer?.frame = view.bounds
         guideOvalLayer.path = UIBezierPath(ovalIn: guideContainer.bounds).cgPath
         guideOvalLayer.frame = guideContainer.bounds
+        updateGuideTarget()
+    }
+
+    /// Maps the oval's centre from view coordinates into normalised frame coordinates.
+    ///
+    /// The preview uses `.resizeAspectFill`, so the visible picture is a centre crop of the frame:
+    /// a point on screen is not the same fraction of the frame that it is of the view. The mapping
+    /// below is the inverse of that fill, which is why it cannot simply be the oval's fraction of
+    /// the view bounds.
+    private func updateGuideTarget() {
+        let view = self.view.bounds.size
+        guard view.width > 0, view.height > 0 else { return }
+
+        let frame = portraitFrameSize
+        guard frame.width > 0, frame.height > 0 else { return }
+        let scale = max(view.width / frame.width, view.height / frame.height)
+        let rendered = CGSize(width: frame.width * scale, height: frame.height * scale)
+        let originX = (view.width - rendered.width) / 2      // negative when cropped
+        let originY = (view.height - rendered.height) / 2
+
+        let ovalCentre = guideContainer.center
+        let targetX = ((ovalCentre.x - originX) / scale) / frame.width
+        let targetY = ((ovalCentre.y - originY) / scale) / frame.height
+
+        guideTargetLock.lock()
+        guideTarget = (Float(min(max(targetX, 0), 1)), Float(min(max(targetY, 0), 1)))
+        guideTargetLock.unlock()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -507,6 +553,14 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
         let timestampMs = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000
         lastFrameTimestampMs = timestampMs
 
+        // What the camera actually delivered, which is not necessarily what the preset asked for.
+        // Recomputing the guide target costs nothing once and keeps the check tied to the oval.
+        let measured = CGSize(width: frameWidth, height: frameHeight)
+        if measured != portraitFrameSize {
+            portraitFrameSize = measured
+            DispatchQueue.main.async { [weak self] in self?.updateGuideTarget() }
+        }
+
         let face = largestFace(faces)
         let observation = makeObservation(faceCount: faces.count,
                                           face: face,
@@ -528,15 +582,21 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             recorder.append(sampleBuffer)
         }
 
-        if update.capturePortrait, let face = face,
+        // The same normalisation the observation used — a crop taken with a box from the other
+        // coordinate space lands somewhere that is not the face.
+        let faceBox = face.map {
+            normalisedFaceBox($0.frame, frameWidth: frameWidth, frameHeight: frameHeight)
+        }
+
+        if update.capturePortrait, let faceBox = faceBox,
            let frame = orientedImage(from: pixelBuffer) {
             portraitFrame = frame
-            portraitFaceBox = face.frame
+            portraitFaceBox = faceBox
         }
 
         if let challenge = update.captureChallengeFrame, options.includeChallengeFrames,
-           let face = face, let frame = orientedImage(from: pixelBuffer) {
-            challengeFrames.append((challenge: challenge, image: frame, faceBox: face.frame))
+           let faceBox = faceBox, let frame = orientedImage(from: pixelBuffer) {
+            challengeFrames.append((challenge: challenge, image: frame, faceBox: faceBox))
         }
 
         render(update)
@@ -568,10 +628,16 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
 
         guard let face = face, frameWidth > 0, frameHeight > 0 else { return obs }
 
-        let box = face.frame
+        let box = normalisedFaceBox(face.frame, frameWidth: frameWidth, frameHeight: frameHeight)
+
+        guideTargetLock.lock()
+        let target = guideTarget
+        guideTargetLock.unlock()
+
         obs.areaRatio = Float((box.width * box.height) / (frameWidth * frameHeight))
-        obs.centerOffsetX = Float((box.midX - frameWidth / 2) / frameWidth)
-        obs.centerOffsetY = Float((box.midY - frameHeight / 2) / frameHeight)
+        // Offset from the guide oval, not from the middle of the frame. See `guideTarget`.
+        obs.centerOffsetX = Float(box.midX / frameWidth) - target.x
+        obs.centerOffsetY = Float(box.midY / frameHeight) - target.y
 
         if face.hasHeadEulerAngleY { obs.yaw = Float(face.headEulerAngleY) }
         if face.hasHeadEulerAngleX { obs.pitch = Float(face.headEulerAngleX) }
@@ -582,6 +648,35 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
         if face.hasTrackingID { obs.trackingId = face.trackingID }
 
         return obs
+    }
+
+    /// Puts a face box into the portrait space the rest of this class works in.
+    ///
+    /// ML Kit for iOS does not state whether a box for a rotated orientation comes back in the
+    /// buffer's own landscape space or in the rotated portrait space, and the two differ by a
+    /// transpose. Android has no such ambiguity — `InputImage` is handed the rotation and returns
+    /// rotated coordinates — which is why this exists only here.
+    ///
+    /// Rather than pick a reading and hope, it is observed. Two signals settle it: a box extending
+    /// past the portrait bounds cannot be in portrait space, and a human face box is taller than it
+    /// is wide, so one that is wider than tall has been transposed. Decided once per session and
+    /// logged, because the decision is worth seeing in a device log.
+    ///
+    /// When the box is already portrait this returns it untouched, so a build where the original
+    /// assumption was right behaves exactly as before.
+    private func normalisedFaceBox(_ box: CGRect,
+                                   frameWidth: CGFloat, frameHeight: CGFloat) -> CGRect {
+        if faceBoxSpace == nil {
+            let outsidePortrait = box.maxX > frameWidth + 1 || box.maxY > frameHeight + 1
+            let widerThanTall = box.width > box.height
+            faceBoxSpace = (outsidePortrait || widerThanTall) ? .landscape : .portrait
+            NSLog("[Liveness] ML Kit face boxes read as %@ space "
+                  + "(box %.0fx%.0f at %.0f,%.0f in a %.0fx%.0f portrait frame)",
+                  faceBoxSpace == .portrait ? "portrait" : "LANDSCAPE, transposing",
+                  box.width, box.height, box.minX, box.minY, frameWidth, frameHeight)
+        }
+        guard faceBoxSpace == .landscape else { return box }
+        return CGRect(x: box.minY, y: box.minX, width: box.height, height: box.width)
     }
 
     /// Renders the frame into the same coordinate space ML Kit reported face boxes in, so the
