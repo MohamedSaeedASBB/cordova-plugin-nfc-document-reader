@@ -734,6 +734,46 @@ NFC.isNFCAvailable(function (status) {
 });
 ```
 
+## Every result has the same envelope
+
+The nine functions grew separately and returned five different top-level shapes. They no longer do.
+Whichever one produced a payload, these keys are on it:
+
+| Field | Always | What it is |
+|---|---|---|
+| `schemaVersion` | yes | `1` |
+| `producedBy` | yes | **The function that produced it**, spelled as you call it. Branch on this. |
+| `captureType` | yes | Legacy — the native layer's own name (`"document"`, `"proofOfAddress"`, `"documentAndLiveness"`), kept because backends already read it. Prefer `producedBy`. |
+| `capturedAt` | yes | ISO 8601, UTC |
+| `completed` | yes | `false` when a step was abandoned; see `cancelledAt` |
+| `verification` | yes | The verdict — same shape everywhere. See below. |
+| `document` | when known | The holder's identity, from the chip or the MRZ, with `source` saying which |
+
+```js
+NfcDocumentReader.captureAndReadNFC(function (r) {
+    if (r.event) return;                       // progress events carry no envelope
+    if (r.producedBy !== "captureAndReadNFC") return;
+    switch (r.verification.outcome) {
+        case "pass":   /* ... */ break;
+        case "review": /* ... */ break;
+        case "fail":   /* ... */ break;
+    }
+    console.log(r.document.surname, r.document.source);   // "source" is "chip" or "mrz"
+}, onError);
+```
+
+**`document.source` is not decoration.** Chip data is signed by the issuing state; MRZ data is OCR
+of printed text, which can be misread and can be forged without breaking a signature. Treating them
+as equivalent treats a guess as an assertion. Fields are named plainly — `surname`, `givenNames` —
+and anything unavailable is `null` rather than absent, so a mapping never tests for a missing key.
+
+**Nothing moved and nothing was removed.** This release only adds, because a backend is already
+mapping these payloads. `document` repeats about twenty short strings; the images are never
+duplicated. The root-level copies can go in a `schemaVersion` 2 once backends have moved.
+
+`NfcDocumentReader.unify(storedPayload, "captureAndReadNFC")` applies the envelope to a payload
+captured before it existed, so archived results can be brought up to the current shape.
+
 ## `verification` — the block to build logic on
 
 The native payload reports every check separately and precisely, which is right for an audit trail

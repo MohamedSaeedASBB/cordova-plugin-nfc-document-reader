@@ -1,4 +1,55 @@
 {
+  "schemaVersion": 1,
+  "producedBy": "captureAndReadNFC",
+  "captureType": "captureAndReadNFC",
+  "capturedAt": "2026-09-30T08:00:00.000Z",
+  "completed": true,
+  "verification": {
+    "outcome": "review",
+    "requiresManualReview": true,
+    "checksPerformed": [
+      "chipAccess",
+      "documentAuthenticity",
+      "liveness",
+      "faceMatch"
+    ],
+    "documentAuthentic": "unknown",
+    "documentTampered": false,
+    "chipUnlocked": true,
+    "holderPresent": "yes",
+    "faceMatch": "review",
+    "faceMatchScore": 0.1731,
+    "issues": [
+      {
+        "code": "NO_TRUST_ANCHORS",
+        "severity": "warning",
+        "message": "The list of trusted issuing authorities is not installed, so the document's issuer could not be confirmed."
+      },
+      {
+        "code": "FACE_SCORE_RETURNED",
+        "severity": "info",
+        "message": "Face match score returned for the backend to decide on."
+      }
+    ],
+    "blockingIssueCount": 0,
+    "warningCount": 1,
+    "summary": "Document authenticity could not be established. A live person was present. Face match score returned for a decision. Decide in the backend or send to manual review."
+  },
+  "document": {
+    "source": "chip",
+    "documentType": "ID",
+    "documentNumber": "X12345678",
+    "issuingState": "BHR",
+    "nationality": "BHR",
+    "dateOfBirth": "900101",
+    "dateOfExpiry": "301231",
+    "dateOfIssue": null,
+    "personalNumber": "123456789",
+    "surname": "SURNAME",
+    "givenNames": "GIVEN NAMES",
+    "fullName": null,
+    "gender": "Female"
+  },
   "documentType": "ID",
   "issuingState": "BHR",
   "primaryIdentifier": "SURNAME",
@@ -178,36 +229,5 @@
       "back"
     ],
     "capturedAt": 1788255648703
-  },
-  "verification": {
-    "outcome": "review",
-    "requiresManualReview": true,
-    "checksPerformed": [
-      "chipAccess",
-      "documentAuthenticity",
-      "liveness",
-      "faceMatch"
-    ],
-    "documentAuthentic": "unknown",
-    "documentTampered": false,
-    "chipUnlocked": true,
-    "holderPresent": "yes",
-    "faceMatch": "review",
-    "faceMatchScore": 0.1731,
-    "issues": [
-      {
-        "code": "NO_TRUST_ANCHORS",
-        "severity": "warning",
-        "message": "The list of trusted issuing authorities is not installed, so the document's issuer could not be confirmed."
-      },
-      {
-        "code": "FACE_SCORE_RETURNED",
-        "severity": "info",
-        "message": "Face match score returned for the backend to decide on."
-      }
-    ],
-    "blockingIssueCount": 0,
-    "warningCount": 1,
-    "summary": "Document authenticity could not be established. A live person was present. Face match score returned for a decision. Decide in the backend or send to manual review."
   }
 }

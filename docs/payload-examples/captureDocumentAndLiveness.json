@@ -1,5 +1,41 @@
 {
+  "schemaVersion": 1,
+  "producedBy": "captureDocumentAndLiveness",
   "captureType": "documentAndLiveness",
+  "capturedAt": 1788255648703,
+  "completed": true,
+  "verification": {
+    "outcome": "review",
+    "requiresManualReview": true,
+    "checksPerformed": [
+      "liveness"
+    ],
+    "documentAuthentic": "unknown",
+    "documentTampered": false,
+    "chipUnlocked": false,
+    "holderPresent": "yes",
+    "faceMatch": "notAvailable",
+    "faceMatchScore": null,
+    "issues": [],
+    "blockingIssueCount": 0,
+    "warningCount": 0,
+    "summary": "Document authenticity could not be established. A live person was present. Face comparison was not available. Decide in the backend or send to manual review."
+  },
+  "document": {
+    "source": "mrz",
+    "documentType": "ID",
+    "documentNumber": "X12345678",
+    "issuingState": "BHR",
+    "nationality": "BHR",
+    "dateOfBirth": "900101",
+    "dateOfExpiry": "301231",
+    "dateOfIssue": null,
+    "personalNumber": null,
+    "surname": "SURNAME",
+    "givenNames": "GIVEN NAMES",
+    "fullName": null,
+    "gender": "F"
+  },
   "documentType": "id",
   "mrz": {
     "documentNumber": "X12345678",
@@ -76,24 +112,5 @@
       "platform": "android",
       "presentationAttackDetection": false
     }
-  },
-  "completed": true,
-  "capturedAt": 1788255648703,
-  "verification": {
-    "outcome": "review",
-    "requiresManualReview": true,
-    "checksPerformed": [
-      "liveness"
-    ],
-    "documentAuthentic": "unknown",
-    "documentTampered": false,
-    "chipUnlocked": false,
-    "holderPresent": "yes",
-    "faceMatch": "notAvailable",
-    "faceMatchScore": null,
-    "issues": [],
-    "blockingIssueCount": 0,
-    "warningCount": 0,
-    "summary": "Document authenticity could not be established. A live person was present. Face comparison was not available. Decide in the backend or send to manual review."
   }
 }
