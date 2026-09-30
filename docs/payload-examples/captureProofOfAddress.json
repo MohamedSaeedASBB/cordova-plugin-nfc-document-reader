@@ -1,5 +1,30 @@
 {
+  "schemaVersion": 1,
+  "producedBy": "captureProofOfAddress",
   "captureType": "proofOfAddress",
+  "capturedAt": 1788255648703,
+  "completed": true,
+  "verification": {
+    "outcome": "review",
+    "requiresManualReview": true,
+    "checksPerformed": [],
+    "documentAuthentic": "unknown",
+    "documentTampered": false,
+    "chipUnlocked": false,
+    "holderPresent": "notChecked",
+    "faceMatch": "notAvailable",
+    "faceMatchScore": null,
+    "issues": [
+      {
+        "code": "NO_CHECKS_PERFORMED",
+        "severity": "warning",
+        "message": "No verification checks were completed on this result."
+      }
+    ],
+    "blockingIssueCount": 0,
+    "warningCount": 1,
+    "summary": "Document authenticity could not be established. Presence of the holder was not checked. Face comparison was not available. Decide in the backend or send to manual review."
+  },
   "sides": {
     "document": {
       "key": "document",
@@ -28,6 +53,5 @@
   },
   "order": [
     "document"
-  ],
-  "capturedAt": 1788255648703
+  ]
 }

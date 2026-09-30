@@ -11,6 +11,55 @@ into a test — they are valid JSON.
 | [`captureDocumentAndLiveness.json`](captureDocumentAndLiveness.json) | `captureDocumentAndLiveness()` — MRZ, both sides, liveness; no chip |
 | [`captureAndReadNFC.json`](captureAndReadNFC.json) | `captureAndReadNFC()` — the full chip read plus photographs |
 
+## Every payload starts the same way
+
+Whichever function produced it, the first keys are the same. A backend can map these once and
+branch on them, without knowing which call it came from:
+
+```json
+{
+  "schemaVersion": 1,
+  "producedBy": "captureAndReadNFC",
+  "captureType": "captureAndReadNFC",
+  "capturedAt": "2026-09-30T08:00:00.000Z",
+  "completed": true,
+  "verification": { "outcome": "review", "checksPerformed": ["chipAccess", "..."], "...": "..." },
+  "document": { "source": "chip", "documentNumber": "...", "surname": "...", "...": "..." }
+}
+```
+
+| Field | Always present | What it is |
+|---|---|---|
+| `schemaVersion` | yes | `1`. Changes only if the shape does. |
+| `producedBy` | yes | **The function that produced this**, spelled as it is called. Branch on this. |
+| `captureType` | yes | Legacy. The native layer's own name for the flow — `"document"`, `"proofOfAddress"`, `"documentAndLiveness"` — which matches neither the functions nor itself. Kept because backends already read it; use `producedBy` instead. |
+| `capturedAt` | yes | ISO 8601, UTC. |
+| `completed` | yes | Whether the flow finished every step. `false` means a step was abandoned — see `cancelledAt`. |
+| `verification` | yes | The verdict, same shape on every payload. `outcome` is `"pass"`, `"review"` or `"fail"`. |
+| `document` | when known | The holder's identity. Absent when the payload carries none — a bare `captureDocument` photographs a card without reading it. |
+
+### `document`, and why `source` matters
+
+`document` holds the identity from the best source this payload had: the chip where there was one,
+the printed MRZ otherwise. **`source` says which, and they are not equally trustworthy.** Chip data
+is signed by the issuing state; MRZ data is optical character recognition of printed text, which
+can be misread and can be forged without breaking anything. A backend that treats them alike is
+treating an OCR guess as a signed assertion.
+
+Fields are named plainly rather than in ICAO's vocabulary: `surname` and `givenNames`, not
+`primaryIdentifier` and `secondaryIdentifier`. Anything unavailable is `null`, never absent, so a
+mapping never has to test for a missing key.
+
+For an MRZ-sourced identity the name, nationality and gender are parsed from `rawMrzLines`, because
+the MRZ scan itself returns only the three fields needed to open a chip.
+
+### What did not move
+
+Nothing. Every field is still where it was — this release only adds. `document` repeats about
+twenty short strings that also appear at the root; the **images are never duplicated**, they stay
+where they already were. The root-level copies can be removed in a `schemaVersion` 2, once
+backends have moved across.
+
 ## What is real and what is not
 
 `captureAndReadNFC.json` is **an actual payload from a device**, read from a Bahraini ID card. Only

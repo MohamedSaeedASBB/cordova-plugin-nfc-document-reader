@@ -77,6 +77,179 @@ function describeIssue(code) {
 }
 
 /**
+ * ---------------------------------------------------------------------------------------------
+ * One envelope on every result
+ * ---------------------------------------------------------------------------------------------
+ * The nine functions grew separately and returned five different top-level shapes: chip fields at
+ * the root of one, the same data nested in another, `capturedAt` on three of five, `verification`
+ * on three of seven. A backend consuming more than one of them had to write a mapping per
+ * function and know which was which.
+ *
+ * Every result now carries the same five keys, whichever function produced it:
+ *
+ *   schemaVersion   so this can change again without guessing
+ *   captureType     which function produced this payload
+ *   capturedAt      ISO 8601, UTC
+ *   completed       did the flow finish every step it set out to
+ *   verification    always present, always the same shape
+ *
+ * plus `document` — the holder's identity as best it is known, from the chip where there was one
+ * and from the MRZ otherwise, with `source` saying which. That is the block application logic
+ * actually wants, and it was previously spelled three different ways.
+ *
+ * WHAT DELIBERATELY DID NOT MOVE
+ * Nothing was relocated and nothing was removed. The existing fields are all still exactly where
+ * they were, because a bank backend is already mapping them and a silent restructure would break
+ * it in production rather than at build time. `document` duplicates about twenty short strings,
+ * which is cheap; the images are large, so they are referenced where they already live and never
+ * copied. Requirement 4 of the bank's letter was raised because card images appeared twice.
+ *
+ * When the backend has moved onto `document`, the root-level copies can go in a schemaVersion 2.
+ */
+function unify(result, captureType) {
+    if (!result || typeof result !== "object" || result.event) return result;
+
+    result.schemaVersion = 1;
+    // The function that produced this payload, always, spelled the same way it is called.
+    //
+    // `captureType` is not reused for it. The native layer already sets that on three of the
+    // flows, to "document", "proofOfAddress" and "documentAndLiveness" — names that match neither
+    // each other nor the functions — and a backend is already reading them. Overwriting would fix
+    // the spelling by breaking production, so the inconsistent field is left exactly as it is and
+    // a predictable one is added beside it. `captureType` can go in a schemaVersion 2.
+    result.producedBy = captureType;
+    if (!result.captureType) result.captureType = captureType;
+    if (!result.capturedAt) result.capturedAt = new Date().toISOString();
+    if (!result.hasOwnProperty("completed")) result.completed = true;
+    if (!result.verification) result.verification = summarise(result);
+
+    var document = identityOf(result);
+    if (document) result.document = document;
+
+    return result;
+}
+
+/**
+ * The holder's identity, from wherever this payload knows it.
+ *
+ * Chip data wins over the MRZ because it is signed and carries fields the MRZ has no room for.
+ * `source` is reported rather than inferred, so a backend can hold MRZ-only identity to a
+ * different standard than chip-derived identity — they are not equally trustworthy, and a payload
+ * that presented them identically would invite treating them as though they were.
+ */
+function identityOf(result) {
+    var mrz = result.mrz || null;
+    var fromChip = typeof result.documentNumber === "string" && result.documentNumber.length > 0;
+    var fromMrz = mrz && typeof mrz.documentNumber === "string" && mrz.documentNumber.length > 0;
+    if (!fromChip && !fromMrz) return null;
+
+    var src = fromChip ? result : mrz;
+    // An MRZ scan returns only the three fields needed to open the chip, but the raw lines it also
+    // returns carry the name, nationality and the rest. Without this, a chip-less flow reports an
+    // identity with a document number and no holder — uniform in shape and useless in practice.
+    var printed = fromChip ? null : parseMrzLines(mrz.rawMrzLines);
+
+    function value(key) {
+        var v = src[key];
+        if (typeof v === "string" && v.length) return v;
+        if (printed && typeof printed[key] === "string" && printed[key].length) return printed[key];
+        return null;
+    }
+
+    return {
+        source: fromChip ? "chip" : "mrz",
+        documentType:   value("documentType"),
+        documentNumber: value("documentNumber"),
+        issuingState:   value("issuingState"),
+        nationality:    value("nationality"),
+        dateOfBirth:    value("dateOfBirth"),
+        dateOfExpiry:   value("dateOfExpiry"),
+        dateOfIssue:    value("dateOfIssue"),
+        personalNumber: value("personalNumber"),
+        // Named for what they are. "primaryIdentifier" is ICAO's wording, not a bank's.
+        surname:        value("primaryIdentifier"),
+        givenNames:     value("secondaryIdentifier"),
+        fullName:       value("fullNameOfHolder"),
+        gender:         value("gender")
+    };
+}
+
+/**
+ * Wraps a success callback so every payload leaves through `unify`.
+ *
+ * Progress events pass through untouched: readNFC and captureAndReadNFC keep the callback open and
+ * push `{ event: "stateChanged", ... }` through it many times before the result, and stamping an
+ * envelope onto one would make it look like a finished payload to anything checking `captureType`.
+ */
+function wrap(success, captureType) {
+    return function(data) {
+        success(unify(data, captureType));
+    };
+}
+
+/**
+ * Reads the ICAO 9303 fields out of scanned MRZ lines.
+ *
+ * The offsets are the standard's, and the same ones MrzChipComparison uses natively on both
+ * platforms. This exists in JavaScript as well because the MRZ-only flows never go near that code:
+ * their payload has the lines but nothing has parsed them.
+ *
+ * Returns null for anything it cannot read rather than guessing. A half-read MRZ producing a
+ * confident-looking name is worse than an absent one.
+ */
+function parseMrzLines(lines) {
+    if (!Array.isArray(lines) || !lines.length) return null;
+    var joined = lines.join("").replace(/[\s|]/g, "").toUpperCase();
+
+    function field(from, to) { return joined.slice(from, to); }
+    function trimmed(from, to) { return field(from, to).replace(/</g, " ").trim() || null; }
+    function names(raw) {
+        var parts = raw.split("<<");
+        var clean = function(v) { return v.replace(/</g, " ").trim() || null; };
+        return { surname: clean(parts[0] || ""), givenNames: clean(parts.slice(1).join("<<")) };
+    }
+
+    var out = {};
+    if (joined.length === 90) {                       // TD1, 3 x 30
+        out.documentType = trimmed(0, 2);
+        out.issuingState = trimmed(2, 5);
+        out.documentNumber = trimmed(5, 14);
+        out.dateOfBirth = field(30, 36);
+        out.gender = trimmed(37, 38);
+        out.dateOfExpiry = field(38, 44);
+        out.nationality = trimmed(45, 48);
+        var td1 = names(field(60, 90));
+        out.primaryIdentifier = td1.surname;
+        out.secondaryIdentifier = td1.givenNames;
+    } else if (joined.length === 72) {                // TD2, 2 x 36
+        out.documentType = trimmed(0, 2);
+        out.issuingState = trimmed(2, 5);
+        var td2 = names(field(5, 36));
+        out.primaryIdentifier = td2.surname;
+        out.secondaryIdentifier = td2.givenNames;
+        out.documentNumber = trimmed(36, 45);
+        out.nationality = trimmed(46, 49);
+        out.dateOfBirth = field(49, 55);
+        out.gender = trimmed(56, 57);
+        out.dateOfExpiry = field(57, 63);
+    } else if (joined.length === 88) {                // TD3, 2 x 44
+        out.documentType = trimmed(0, 2);
+        out.issuingState = trimmed(2, 5);
+        var td3 = names(field(5, 44));
+        out.primaryIdentifier = td3.surname;
+        out.secondaryIdentifier = td3.givenNames;
+        out.documentNumber = trimmed(44, 53);
+        out.nationality = trimmed(54, 57);
+        out.dateOfBirth = field(57, 63);
+        out.gender = trimmed(64, 65);
+        out.dateOfExpiry = field(65, 71);
+    } else {
+        return null;                                  // a partial read is not something to parse
+    }
+    return out;
+}
+
+/**
  * Builds the `verification` block from a readNFC result. Exposed as
  * NfcDocumentReader.summarise(result) so it can also be run over a stored payload.
  */
@@ -236,7 +409,7 @@ var NfcDocumentReader = {
      *                 reduces heat on long scans; lowering it makes detection feel more immediate.
      */
     scanMRZ: function(success, error, options) {
-        exec(success, error, SERVICE_NAME, 'scanMRZ', [options || {}]);
+        exec(wrap(success, 'scanMRZ'), error, SERVICE_NAME, 'scanMRZ', [options || {}]);
     },
 
     /**
@@ -305,7 +478,7 @@ var NfcDocumentReader = {
      *   turnLeftSmile, turnRightSmile, turnLeftBlink, turnRightBlink, hold, success, failed, hint.
      */
     checkLiveness: function(success, error, options) {
-        exec(success, error, SERVICE_NAME, 'checkLiveness', [options || {}]);
+        exec(wrap(success, 'checkLiveness'), error, SERVICE_NAME, 'checkLiveness', [options || {}]);
     },
 
     /**
@@ -472,13 +645,7 @@ var NfcDocumentReader = {
      * @param {number} [options.faceMatch.embeddingSize=192] - Model output vector length
      */
     readNFC: function(success, error, mrzData, options) {
-        exec(function(data) {
-            // Progress events pass straight through; the final result gains `verification`.
-            if (data && !data.event) {
-                data.verification = summarise(data);
-            }
-            success(data);
-        }, error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);
+        exec(wrap(success, 'readNFC'), error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);
     },
 
     /**
@@ -488,6 +655,15 @@ var NfcDocumentReader = {
      * @returns {Object} the verification block
      */
     summarise: summarise,
+
+    /**
+     * Applies the envelope to a payload, exposed for the same reason as `summarise`: a result
+     * stored before this existed can be brought up to the current shape without another capture.
+     *
+     * @param {Object} result - a payload from any of the capture functions
+     * @param {string} [captureType] - used only when the payload does not already say
+     */
+    unify: unify,
 
     /**
      * Photograph the document itself, one side at a time.
@@ -537,7 +713,7 @@ var NfcDocumentReader = {
      * there the picture is the data.
      */
     captureDocument: function(success, error, options) {
-        exec(success, error, SERVICE_NAME, 'captureDocument', [options || {}]);
+        exec(wrap(success, 'captureDocument'), error, SERVICE_NAME, 'captureDocument', [options || {}]);
     },
 
     /**
@@ -576,12 +752,8 @@ var NfcDocumentReader = {
      *                 options (maxImageDimension, maxImageBytes, jpegQuality)
      */
     captureAndReadNFC: function(success, error, options) {
-        exec(function(data) {
-            if (data && !data.event) {
-                data.verification = summarise(data);
-            }
-            success(data);
-        }, error, SERVICE_NAME, 'captureAndReadNFC', [options || {}]);
+        exec(wrap(success, 'captureAndReadNFC'), error, SERVICE_NAME,
+             'captureAndReadNFC', [options || {}]);
     },
 
     /**
@@ -622,12 +794,8 @@ var NfcDocumentReader = {
      * @param {number} [options.jpegQuality]
      */
     captureDocumentAndLiveness: function(success, error, options) {
-        exec(function(data) {
-            if (data && !data.event) {
-                data.verification = summarise(data);
-            }
-            success(data);
-        }, error, SERVICE_NAME, 'captureDocumentAndLiveness', [options || {}]);
+        exec(wrap(success, 'captureDocumentAndLiveness'), error, SERVICE_NAME,
+             'captureDocumentAndLiveness', [options || {}]);
     },
 
     /**
@@ -670,7 +838,7 @@ var NfcDocumentReader = {
      * for dense pages; lower them if payload size matters more than legibility.
      */
     captureProofOfAddress: function(success, error, options) {
-        exec(success, error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
+        exec(wrap(success, 'captureProofOfAddress'), error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
     },
 
     /**
