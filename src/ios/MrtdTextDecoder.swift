@@ -41,6 +41,8 @@ enum MrtdTextDecoder {
     static let tagPermanentAddress = 0x5F42
     static let tagTelephone        = 0x5F12
     static let tagPersonalSummary  = 0x5F15
+    /// The national identification number on cards that carry one, e.g. Algeria's NIN.
+    static let tagPersonalNumber   = 0x5F10
     // DG12
     static let tagIssuingAuthority = 0x5F19
     static let tagEndorsements     = 0x5F1B
