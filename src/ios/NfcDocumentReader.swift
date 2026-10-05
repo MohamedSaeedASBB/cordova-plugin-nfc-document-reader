@@ -191,6 +191,7 @@ class NfcDocumentReaderWrapper {
     /// `issuerTrusted` prove the chip is internally consistent, which a forger signing their own
     /// data with their own certificate also achieves.
     private func authenticationBlock(from passport: NFCPassportModel) -> [String: Any] {
+        let sod = SodInspector.inspect(sod: passport.getDataGroup(.SOD)?.data)
         let sodSignatureVerified = passport.documentSigningCertificateVerified
         let dataIntegrityVerified = passport.passportDataNotTampered
         let issuerTrusted = passport.passportCorrectlySigned
@@ -231,10 +232,16 @@ class NfcDocumentReaderWrapper {
             // reported as unavailable rather than guessed. Android fills them in. Note the
             // document signer certificate does expose a signature algorithm, but that is the
             // algorithm the CSCA used to sign the certificate — not the one used for the SOD —
-            // so putting it here would report the wrong thing under the right name.
-            "digestAlgorithm": NSNull(),
-            "signatureAlgorithm": NSNull(),
-            "documentSignerSubject": passport.documentSigningCertificate?.getSubjectName() ?? NSNull(),
+            // so putting it here would report the wrong thing under the right name. Read from the
+            // SOD's own DER instead; see SodInspector.
+            "digestAlgorithm": sod.digestAlgorithm ?? NSNull(),
+            "signatureAlgorithm": sod.signatureAlgorithm ?? NSNull(),
+            // The library only extracts the signer certificate when a CSCA master list is
+            // supplied, so without a trust store installed this was null on iOS while Android
+            // reported it from every read. Who signed a document is a fact worth recording even
+            // when — especially when — the issuer could not be confirmed.
+            "documentSignerSubject": passport.documentSigningCertificate?.getSubjectName()
+                ?? sod.signerSubject ?? NSNull(),
             "trustStore": resolveTrustStorePath() != nil ? "loaded" : "none",
             "dataGroupHashes": dataGroupHashes,
             "reasons": reasons

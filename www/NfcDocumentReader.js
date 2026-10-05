@@ -525,8 +525,9 @@ var NfcDocumentReader = {
      *   authentication: {
      *     chipAccessEstablished,   // BAC or PACE unlocked the chip. Says nothing about the data.
      *     accessProtocol,          // "PACE" | "BAC" | null
-     *     chipAuthentication,      // "success" | "failed" | "notDone" | "notPerformed"
-     *                              // Anti-cloning (EAC). "notPerformed" on Android — not implemented.
+     *     chipAuthentication,      // "success" | "failed" | "notDone"
+     *                              // Anti-cloning (EAC). "notDone" on Android, which does not
+     *                              // perform it at all; on iOS it is the chip's real status.
      *     passiveAuthentication: {
      *       status,                // "passed" | "failed" | "notVerified"
      *       sodSignatureVerified,  // the SOD is validly signed by the signer certificate it carries

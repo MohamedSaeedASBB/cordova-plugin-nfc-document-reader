@@ -176,7 +176,12 @@ public class DocumentData {
         auth.put("accessProtocol", accessProtocol != null ? accessProtocol : JSONObject.NULL);
         // Chip Authentication (anti-cloning) is a separate EAC protocol this reader does not
         // perform on Android. Reported as not performed rather than inferred from something else.
-        auth.put("chipAuthentication", "notPerformed");
+        //
+        // "notDone" rather than "notPerformed" so the two platforms agree on the vocabulary: iOS
+        // reports the library's own states, which are "success", "failed" and "notDone". A backend
+        // branching on this was comparing a real result on one platform against a different word
+        // meaning the same thing on the other.
+        auth.put("chipAuthentication", "notDone");
         auth.put("passiveAuthentication", passiveAuthentication != null
                 ? passiveAuthentication.toJson()
                 : notRunPassiveAuth());
