@@ -147,6 +147,7 @@
         <source-file src="src/ios/FaceMatcher.swift" />
         <source-file src="src/ios/MrtdTextDecoder.swift" />
         <source-file src="src/ios/MrzChipComparison.swift" />
+        <source-file src="src/ios/SodInspector.swift" />
         <source-file src="src/ios/LivenessVideoRecorder.swift" />
         <source-file src="src/ios/DocumentEvidenceCheck.swift" />
         <source-file src="src/ios/DocumentCaptureViewController.swift" />

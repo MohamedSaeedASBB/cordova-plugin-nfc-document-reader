@@ -62,15 +62,24 @@ class NfcDocumentReaderWrapper {
                   self.trustStoreResource ?? "disabled")
         }
 
-        // For passports (TD3), request additional data groups (signature, personal/document details).
-        // For national IDs (TD1/TD2), only request essentials — DG7, DG11, DG12 are commonly
-        // protected by EAC and cause "security status not satisfied" errors.
-        let tags: [DataGroupId]
-        if mrzFormat == "TD3" {
-            tags = [.DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
-        } else {
-            tags = [.DG1, .DG2, .SOD]
-        }
+        // Every document is asked for the same data groups, as Android asks for them.
+        //
+        // National IDs used to be asked for DG1, DG2 and the SOD only, on the assumption that
+        // DG7, DG11 and DG12 are "commonly protected by EAC" on them and that asking would fail
+        // the read. That assumption cost the national identification number, the holder's name in
+        // Arabic, the place of birth and the issuing authority on every TD1 card read on iOS,
+        // while Android — which asks for them unconditionally — returned all four from the same
+        // Algerian card.
+        //
+        // It was also unnecessary. NFCPassportReader does not abort on a refused data group: a
+        // "Security status not satisfied" or "File not found" drops that one and carries on
+        // (PassportReader.readNextDataGroup). And because .COM is requested first, the library
+        // narrows the list to what the chip's own file list advertises, so a document that does
+        // not carry DG11 is never asked for it.
+        //
+        // The cost of asking for a group the card will not give is therefore one refused APDU at
+        // worst. The cost of not asking was four missing fields.
+        let tags: [DataGroupId] = [.COM, .DG1, .DG2, .DG7, .DG11, .DG12, .SOD]
 
         // Read document with progress updates
         passportReader.readPassport(mrzKey: mrzKey, tags: tags,
@@ -182,6 +191,7 @@ class NfcDocumentReaderWrapper {
     /// `issuerTrusted` prove the chip is internally consistent, which a forger signing their own
     /// data with their own certificate also achieves.
     private func authenticationBlock(from passport: NFCPassportModel) -> [String: Any] {
+        let sod = SodInspector.inspect(sod: passport.getDataGroup(.SOD)?.data)
         let sodSignatureVerified = passport.documentSigningCertificateVerified
         let dataIntegrityVerified = passport.passportDataNotTampered
         let issuerTrusted = passport.passportCorrectlySigned
@@ -222,10 +232,16 @@ class NfcDocumentReaderWrapper {
             // reported as unavailable rather than guessed. Android fills them in. Note the
             // document signer certificate does expose a signature algorithm, but that is the
             // algorithm the CSCA used to sign the certificate — not the one used for the SOD —
-            // so putting it here would report the wrong thing under the right name.
-            "digestAlgorithm": NSNull(),
-            "signatureAlgorithm": NSNull(),
-            "documentSignerSubject": passport.documentSigningCertificate?.getSubjectName() ?? NSNull(),
+            // so putting it here would report the wrong thing under the right name. Read from the
+            // SOD's own DER instead; see SodInspector.
+            "digestAlgorithm": sod.digestAlgorithm ?? NSNull(),
+            "signatureAlgorithm": sod.signatureAlgorithm ?? NSNull(),
+            // The library only extracts the signer certificate when a CSCA master list is
+            // supplied, so without a trust store installed this was null on iOS while Android
+            // reported it from every read. Who signed a document is a fact worth recording even
+            // when — especially when — the issuer could not be confirmed.
+            "documentSignerSubject": passport.documentSigningCertificate?.getSubjectName()
+                ?? sod.signerSubject ?? NSNull(),
             "trustStore": resolveTrustStorePath() != nil ? "loaded" : "none",
             "dataGroupHashes": dataGroupHashes,
             "reasons": reasons
@@ -313,7 +329,17 @@ class NfcDocumentReaderWrapper {
         data["nationality"] = nonEmpty(passport.nationality, fallback: mrzFields["nationality"] ?? "")
         data["dateOfBirth"] = nonEmpty(passport.dateOfBirth, fallback: mrzFields["dateOfBirth"] ?? "")
         data["dateOfExpiry"] = nonEmpty(passport.documentExpiryDate, fallback: mrzFields["dateOfExpiry"] ?? "")
-        data["personalNumber"] = clean(passport.personalNumber ?? mrzFields["personalNumber"] ?? "")
+        // The national identification number. NFCPassportReader reads DG11's 0x5F10 itself, but
+        // decodes every DG11 value as UTF-8 and yields nil for anything else — so on a card whose
+        // other DG11 fields are in a single-byte Arabic code page, a perfectly ASCII number can be
+        // lost along with them. Read directly from the data group as a fallback before dropping to
+        // the MRZ, which on a TD1 holds a shorter number or none at all.
+        data["personalNumber"] = clean(
+            passport.personalNumber
+                ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagPersonalNumber,
+                                         in: passport.getDataGroup(.DG11)?.data)
+                ?? mrzFields["personalNumber"]
+                ?? "")
 
         // Format gender to match Android (Male/Female/Unspecified)
         let rawGender = nonEmpty(passport.gender, fallback: mrzFields["gender"] ?? "")
@@ -360,7 +386,13 @@ class NfcDocumentReaderWrapper {
 
         data["fullNameOfHolder"] = recovered.fields[MrtdTextDecoder.tagFullName]
             ?? (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
-        data["otherNames"] = [String]()
+        // DG11's 0x5F0F, which on an Algerian card carries the holder's name in Arabic. It was
+        // hardcoded empty here while Android returned it, so the field existed on both platforms
+        // and meant something on only one.
+        let otherNames = recovered.fields[MrtdTextDecoder.tagOtherNames]
+            ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagOtherNames,
+                                     in: passport.getDataGroup(.DG11)?.data)
+        data["otherNames"] = MrtdTextDecoder.splitComponents(otherNames ?? "")
         data["personalSummary"] = text(MrtdTextDecoder.tagPersonalSummary, "")
         // Joined for display; the components are what application logic should read, because a
         // single DG11 field can carry several unrelated attributes. See README.
@@ -395,11 +427,15 @@ class NfcDocumentReaderWrapper {
         }
 
         // Metadata
+        // Numbered data groups only. EF.COM and the SOD both map to a number that is not a data
+        // group, and listing them made the iOS array read [1, 0, 2] where Android's read
+        // [1, 2, 7, 11, 12] — the same field meaning two different things per platform.
         var dataGroupsRead: [Int] = []
         for (dgId, _) in passport.dataGroupsRead {
-            dataGroupsRead.append(dataGroupIdToNumber(dgId))
+            let number = dataGroupIdToNumber(dgId)
+            if number >= 1 { dataGroupsRead.append(number) }
         }
-        data["dataGroupsRead"] = dataGroupsRead
+        data["dataGroupsRead"] = dataGroupsRead.sorted()
         data["authentication"] = authenticationBlock(from: passport)
 
         var readErrors: [String: String] = [:]
