@@ -384,8 +384,13 @@ class NfcDocumentReaderWrapper {
         let placeOfBirth = text(MrtdTextDecoder.tagPlaceOfBirth, passport.placeOfBirth)
         let permanentAddress = text(MrtdTextDecoder.tagPermanentAddress, passport.residenceAddress)
 
-        data["fullNameOfHolder"] = recovered.fields[MrtdTextDecoder.tagFullName]
+        let fullName = recovered.fields[MrtdTextDecoder.tagFullName]
             ?? (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
+        data["fullNameOfHolder"] = fullName
+        // The components, as placeOfBirthLines and permanentAddressLines already report theirs.
+        // An Algerian card carries the Latin and Arabic forms of the name in one field separated
+        // by '<<', so the split is where the Arabic surname actually becomes readable.
+        data["fullNameOfHolderLines"] = MrtdTextDecoder.splitComponents(fullName)
         // DG11's 0x5F0F, which on an Algerian card carries the holder's name in Arabic. It was
         // hardcoded empty here while Android returned it, so the field existed on both platforms
         // and meant something on only one.

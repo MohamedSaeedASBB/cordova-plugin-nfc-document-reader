@@ -63,6 +63,7 @@
   "faceImageBase64": "/9j/4AAQSkZJRgABAQ… (base64 JPEG/PNG)",
   "signatureImageBase64": null,
   "fullNameOfHolder": "",
+  "fullNameOfHolderLines": [],
   "otherNames": [],
   "personalSummary": "",
   "placeOfBirth": "",
