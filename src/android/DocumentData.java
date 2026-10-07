@@ -123,9 +123,23 @@ public class DocumentData {
 
         // DG11
         json.put("fullNameOfHolder", fullNameOfHolder);
+        // The holder's name, split into its components.
+        //
+        // ICAO separates the parts of a DG11 text field with '<', and an Algerian card uses that
+        // to carry the Latin and Arabic forms of the same name: "TOUATI<<تواتي". Handing a backend
+        // one string with a separator buried in it makes every consumer re-split it, and each one
+        // has to know the convention. placeOfBirthLines and permanentAddressLines have been doing
+        // this all along; the names were the odd ones out.
+        json.put("fullNameOfHolderLines", toJsonArray(MrtdTextDecoder.splitComponents(fullNameOfHolder)));
+
+        // Each entry split the same way, then flattened. Android previously returned jmrtd's list
+        // untouched — one element still containing "<<" — while iOS split it, so the same card
+        // produced a one-item array on one platform and a two-item array on the other.
         JSONArray namesArray = new JSONArray();
         for (String name : otherNames) {
-            namesArray.put(name);
+            for (String part : MrtdTextDecoder.splitComponents(name)) {
+                namesArray.put(part);
+            }
         }
         json.put("otherNames", namesArray);
         json.put("personalSummary", personalSummary);

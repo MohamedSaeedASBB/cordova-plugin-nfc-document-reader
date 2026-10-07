@@ -840,7 +840,8 @@ it.
   documentType, issuingState, primaryIdentifier, secondaryIdentifier,
   documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
   faceImageBase64, signatureImageBase64,
-  fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
+  fullNameOfHolder, fullNameOfHolderLines, otherNames, personalSummary,
+  placeOfBirth, permanentAddress, telephone,
   issuingAuthority, dateOfIssue, endorsementsAndObservations,
   dataGroupsRead, authentication, readErrors,
 
@@ -1041,6 +1042,22 @@ MRZ alphabet is `A-Z`, `0-9` and `<`. **The holder's name in its own script is `
 from DG11, along with `placeOfBirth`, `permanentAddress` and `issuingAuthority`. A document with no
 DG11 returns those empty, which is a property of the card rather than a fault — `readErrors` says
 so when the chip answered FILE NOT FOUND.
+
+**Read the `…Lines` arrays, not the joined strings.** ICAO separates the parts of a DG11 text field
+with `<`, and an issuer decides what the parts mean. An Algerian card uses it to carry both scripts
+of one value:
+
+```json
+"fullNameOfHolder":      "TOUATI<<تواتي",
+"fullNameOfHolderLines": ["TOUATI", "تواتي"],
+"otherNames":            ["CHAHRAZED", "شهرزاد"],
+"placeOfBirth":          "BENI MESSOUS, بني مسوس",
+"placeOfBirthLines":     ["BENI MESSOUS", "بني مسوس"]
+```
+
+The joined strings are for display. The arrays are what application logic should read — picking the
+Arabic form for an Arabic interface means taking an element, not splitting a string and knowing the
+convention. The order is the card's, not a guarantee that Latin comes first.
 
 `personalNumber` comes from the MRZ where the issuer puts it there, and from DG11 (`0x5F10`) where
 they do not: an Algerian ID leaves the MRZ field empty and carries an 18-digit national number in
