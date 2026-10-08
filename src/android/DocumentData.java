@@ -165,6 +165,22 @@ public class DocumentData {
         // encoding produced.
         json.put("textEncoding", textEncoding != null ? textEncoding : JSONObject.NULL);
 
+        // How much non-ASCII text this plugin put into the payload, counted as it was written.
+        //
+        // Arabic from DG11 kept arriving at the back office as question marks, and establishing
+        // where it was being lost took three rounds of device testing because nothing in the
+        // payload said what had left the handset. This does: if a stored payload reports a count
+        // here but its own name and address fields hold no non-ASCII characters, they were
+        // destroyed after this plugin returned — a lossy conversion somewhere downstream, which is
+        // what substitutes '?'. Nothing here converts: the plugin is UTF-8 throughout.
+        JSONObject textRecovery = new JSONObject();
+        textRecovery.put("encoding", textEncoding != null ? textEncoding : JSONObject.NULL);
+        textRecovery.put("nonAsciiCharacters", countNonAscii(
+                fullNameOfHolder, personalSummary, placeOfBirth, permanentAddress,
+                issuingAuthority, endorsementsAndObservations)
+                + countNonAscii(otherNames.toArray(new String[0])));
+        json.put("textRecovery", textRecovery);
+
         // Raw data groups, base64, only when requested. Keyed by data group number, plus "sod",
         // which is the one a backend needs to re-run passive authentication independently.
         if (rawDataGroups != null || rawSod != null) {
@@ -208,6 +224,22 @@ public class DocumentData {
         json.put("readErrors", errorsObj);
 
         return json;
+    }
+
+    /**
+     * Characters outside printable ASCII across the values given. A plain count, deliberately: it
+     * is a tripwire for text being mangled in transit, not an analysis of what the text says.
+     * Mirrors NfcDocumentReader.countNonAscii on iOS.
+     */
+    private static int countNonAscii(String... values) {
+        int total = 0;
+        for (String value : values) {
+            if (value == null) continue;
+            for (int i = 0; i < value.length(); i++) {
+                if (value.charAt(i) > 0x7E) total++;
+            }
+        }
+        return total;
     }
 
     private static JSONArray toJsonArray(List<String> values) {
