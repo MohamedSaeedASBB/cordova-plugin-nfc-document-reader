@@ -1043,6 +1043,31 @@ from DG11, along with `placeOfBirth`, `permanentAddress` and `issuingAuthority`.
 DG11 returns those empty, which is a property of the card rather than a fault — `readErrors` says
 so when the chip answered FILE NOT FOUND.
 
+### Arabic arriving as `?????`
+
+If the holder's name reaches your backend as question marks, **the plugin is not where it was lost.**
+A payload says so itself:
+
+```json
+"textEncoding": "ISO-8859-6",
+"textRecovery": { "encoding": "ISO-8859-6", "nonAsciiCharacters": 11 },
+"fullNameOfHolder": "TOUATI<<?????"
+```
+
+`nonAsciiCharacters` is counted **as the plugin writes the payload**. A stored result that reports a
+count here while its own name and address fields contain no non-ASCII characters is contradicting
+itself: those characters existed when the plugin returned and were destroyed afterwards.
+
+`?` is what a lossy Unicode-to-single-byte conversion substitutes. Nothing in this plugin performs
+one — it is UTF-8 from the data group to the callback. Look instead at:
+
+1. **The database column** — `varchar` rather than `nvarchar` on SQL Server is the usual cause.
+2. **The connection charset** — a JDBC/ODBC connection without `UTF-8`.
+3. **The REST response** — `Content-Type` without `charset=utf-8`.
+
+To confirm in a minute: log `result.fullNameOfHolder` in the JS node before sending it anywhere.
+Arabic in the console and `?` in the database tells you which side the loss is on.
+
 **Read the `…Lines` arrays, not the joined strings.** ICAO separates the parts of a DG11 text field
 with `<`, and an issuer decides what the parts mean. An Algerian card uses it to carry both scripts
 of one value:

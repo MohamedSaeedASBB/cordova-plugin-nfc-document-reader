@@ -408,6 +408,27 @@ class NfcDocumentReaderWrapper {
         data["permanentAddressLines"] = MrtdTextDecoder.splitComponents(permanentAddress)
         data["telephone"] = text(MrtdTextDecoder.tagTelephone, passport.phoneNumber)
         data["textEncoding"] = recovered.encoding ?? NSNull()
+        // How much non-ASCII text this plugin put into the payload, counted as it was written.
+        //
+        // Arabic from DG11 kept arriving at the back office as question marks, and establishing
+        // where it was being lost took three rounds of device testing because nothing in the
+        // payload said what had left the handset. This does: if a stored payload reports a count
+        // here but its own name and address fields hold no non-ASCII characters, they were
+        // destroyed after this plugin returned — a lossy conversion somewhere downstream, which
+        // is what substitutes '?'. Nothing here converts: the plugin is UTF-8 throughout.
+        let nonAsciiCharacters: Int = Self.countNonAscii([
+            data["fullNameOfHolder"], data["otherNames"], data["personalSummary"],
+            data["placeOfBirth"], data["permanentAddress"], data["issuingAuthority"],
+            data["endorsementsAndObservations"]
+        ])
+        // Only what both platforms can compute to mean exactly the same thing. A count of
+        // "fields recovered" was dropped from this block for that reason: the two sides would have
+        // counted different sets, which is the class of defect this whole field exists to expose.
+        let textRecovery: [String: Any] = [
+            "encoding": recovered.encoding ?? NSNull(),
+            "nonAsciiCharacters": nonAsciiCharacters
+        ]
+        data["textRecovery"] = textRecovery
 
         // DG12 - Additional Document Details
         data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
@@ -574,6 +595,25 @@ class NfcDocumentReaderWrapper {
     }
 
     #if canImport(NFCPassportReader)
+    /// Characters outside printable ASCII across the values given, descending into string arrays.
+    /// A plain count, deliberately: it is a tripwire for text being mangled in transit, not an
+    /// analysis of what the text says.
+    static func countNonAscii(_ values: [Any?]) -> Int {
+        var total = 0
+        for value in values {
+            if let text = value as? String {
+                total += nonAscii(in: text)
+            } else if let list = value as? [String] {
+                for text in list { total += nonAscii(in: text) }
+            }
+        }
+        return total
+    }
+
+    private static func nonAscii(in text: String) -> Int {
+        return text.unicodeScalars.reduce(0) { $0 + ($1.value > 0x7E ? 1 : 0) }
+    }
+
     private func dataGroupIdToNumber(_ dg: DataGroupId) -> Int {
         switch dg {
         case .DG1: return 1
