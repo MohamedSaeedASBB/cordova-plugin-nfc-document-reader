@@ -412,6 +412,15 @@ class NfcDocumentReaderWrapper {
         // DG12 - Additional Document Details
         data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
             ?? nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
+        // The MRZ gives a two-digit year, so 970702 is 1997 or 2097 and the reader has to guess.
+        // DG11 carries the date in full where the issuer wrote it, and an Algerian card does.
+        // Reported separately rather than replacing dateOfBirth: that field is what the chip's
+        // access key was derived from, and quietly changing its format would break every caller
+        // that parses it.
+        data["dateOfBirthInFull"] = MrtdTextDecoder.value(
+            tag: MrtdTextDecoder.tagDateOfBirthInFull,
+            in: passport.getDataGroup(.DG11)?.data) ?? ""
+
         data["dateOfIssue"] = MrtdTextDecoder.value(
             tag: MrtdTextDecoder.tagDateOfIssue, in: passport.getDataGroup(.DG12)?.data) ?? ""
         data["endorsementsAndObservations"] = text(MrtdTextDecoder.tagEndorsements, "")

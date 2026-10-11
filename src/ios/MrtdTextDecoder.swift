@@ -43,6 +43,8 @@ enum MrtdTextDecoder {
     static let tagPersonalSummary  = 0x5F15
     /// The national identification number on cards that carry one, e.g. Algeria's NIN.
     static let tagPersonalNumber   = 0x5F10
+    /// ICAO's "date of birth (in full)" — YYYYMMDD, where the MRZ carries only YYMMDD.
+    static let tagDateOfBirthInFull = 0x5F2B
     // DG12
     static let tagIssuingAuthority = 0x5F19
     static let tagEndorsements     = 0x5F1B

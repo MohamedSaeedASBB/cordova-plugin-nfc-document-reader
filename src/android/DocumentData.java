@@ -86,6 +86,8 @@ public class DocumentData {
      * was decoded again with a code page chosen by inspection — see MrtdTextDecoder.
      */
     public String textEncoding = null;
+    /** DG11's date of birth in full, YYYYMMDD. The MRZ only carries YYMMDD. */
+    public String dateOfBirthInFull = "";
     public Map<Integer, String> readErrors = new HashMap<>();
 
     /**
@@ -122,6 +124,11 @@ public class DocumentData {
         }
 
         // DG11
+        // The MRZ gives a two-digit year, so 970702 is 1997 or 2097 and the reader has to guess.
+        // DG11 carries the date in full where the issuer wrote it. Reported separately rather than
+        // replacing dateOfBirth: that field is what the chip's access key was derived from, and
+        // quietly changing its format would break every caller that parses it.
+        json.put("dateOfBirthInFull", dateOfBirthInFull);
         json.put("fullNameOfHolder", fullNameOfHolder);
         // The holder's name, split into its components.
         //
