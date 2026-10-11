@@ -923,6 +923,32 @@ So the components are returned as arrays too:
 means is the issuer's convention, not something the plugin can tell you — confirm the mapping
 against the physical document per issuing country before storing it in named fields.
 
+The same caution applies to whole fields, not just components. Decoded from one real Algerian card:
+
+| Field, named per ICAO | What the card actually carries |
+|---|---|
+| `permanentAddress` | `F<<أنثى<<O+` — sex, sex in Arabic, blood group. **Not an address.** |
+| `endorsementsAndObservations` | `20281124` — the expiry date, repeated |
+| `dateOfBirthInFull` | `19970702` — genuinely the date of birth, in full |
+
+The plugin reports each tag under its ICAO name because that is what the tag is; it cannot know
+what an issuer chose to put there. A backend that maps `permanentAddress` to an address column
+will store a blood group.
+
+### `dateOfBirthInFull`
+
+The MRZ carries a two-digit year, so `970702` is 1997 or 2097 and the reader has to guess. DG11
+carries the date in full where the issuer wrote it — `19970702` — and that is reported separately:
+
+```json
+"dateOfBirth":       "970702",      // from the MRZ, as the chip access key used it
+"dateOfBirthInFull": "19970702"     // from DG11 0x5F2B, where the card has it
+```
+
+`dateOfBirth` deliberately keeps its MRZ format: it is what the BAC/PACE key was derived from, and
+changing it would break every caller that parses it. Empty when the card does not carry the tag.
+**Use `dateOfBirthInFull` for anything age-related**, and fall back rather than guessing a century.
+
 ### Raw data groups
 
 Pass `includeRawDataGroups: true` to `readNFC` to get each data group exactly as read from the

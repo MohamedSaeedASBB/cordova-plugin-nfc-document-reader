@@ -59,6 +59,8 @@ final class MrtdTextDecoder {
     private static final int TAG_TELEPHONE         = 0x5F12;
     private static final int TAG_PERSONAL_SUMMARY  = 0x5F15;
     private static final int TAG_PERSONAL_NUMBER   = 0x5F10;
+    /** ICAO's "date of birth (in full)" — YYYYMMDD, where the MRZ carries only YYMMDD. */
+    static final int TAG_DATE_OF_BIRTH_IN_FULL     = 0x5F2B;
     // DG12
     private static final int TAG_ISSUING_AUTHORITY = 0x5F19;
     private static final int TAG_ENDORSEMENTS      = 0x5F1B;
@@ -192,6 +194,21 @@ final class MrtdTextDecoder {
             joined.append(part);
         }
         return joined.toString();
+    }
+
+    /**
+     * One TLV value read straight from a data group, decoded as UTF-8.
+     *
+     * For fields that are digits rather than script, where the code-page recovery above does not
+     * apply and never will: a date that is not valid UTF-8 is a corrupt date, not one in another
+     * character set. Mirrors MrtdTextDecoder.value(tag:in:) on iOS.
+     */
+    static String value(int tag, byte[] raw) {
+        if (raw == null || raw.length == 0) return null;
+        List<byte[]> values = parseTlv(raw).get(tag);
+        if (values == null || values.isEmpty()) return null;
+        String text = new String(values.get(0), java.nio.charset.StandardCharsets.UTF_8).trim();
+        return text.isEmpty() ? null : text;
     }
 
     private static String decodeWith(Map<Integer, List<byte[]>> fields, int tag, String charsetName) {

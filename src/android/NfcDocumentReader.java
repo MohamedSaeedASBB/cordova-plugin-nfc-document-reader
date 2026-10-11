@@ -596,6 +596,8 @@ public class NfcDocumentReader {
                 DG11File dg11File = new DG11File(new ByteArrayInputStream(dg11Bytes));
 
                 documentData.fullNameOfHolder = safeString(dg11File.getNameOfHolder());
+                documentData.dateOfBirthInFull = safeString(
+                        MrtdTextDecoder.value(MrtdTextDecoder.TAG_DATE_OF_BIRTH_IN_FULL, dg11Bytes));
                 try {
                     List<String> names = dg11File.getOtherNames();
                     if (names != null) documentData.otherNames = names;
