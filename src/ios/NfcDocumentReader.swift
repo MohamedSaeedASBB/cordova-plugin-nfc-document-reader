@@ -320,7 +320,18 @@ class NfcDocumentReaderWrapper {
         }
 
         // DG1 - MRZ Info (with fallback from raw MRZ)
-        data["documentType"] = nonEmpty(passport.documentType, fallback: mrzFields["documentType"] ?? "")
+        // NFCPassportReader splits the MRZ document code across two properties — documentType is
+        // its first character and documentSubType its second — so a national ID's "ID" arrived
+        // here as "I" while Android reported "ID" from the same card. The code is the two
+        // characters at positions 1-2 of the MRZ, so both halves are needed.
+        //
+        // Filler and the library's "?" placeholder are stripped: a passport's code is "P<", which
+        // is the letter P and a filler, not a two-letter code.
+        let documentCode = (passport.documentType + passport.documentSubType)
+            .replacingOccurrences(of: "<", with: "")
+            .replacingOccurrences(of: "?", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        data["documentType"] = nonEmpty(documentCode, fallback: mrzFields["documentType"] ?? "")
         data["issuingState"] = nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
         data["primaryIdentifier"] = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
         data["secondaryIdentifier"] = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
