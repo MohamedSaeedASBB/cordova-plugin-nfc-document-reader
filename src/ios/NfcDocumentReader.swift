@@ -408,27 +408,6 @@ class NfcDocumentReaderWrapper {
         data["permanentAddressLines"] = MrtdTextDecoder.splitComponents(permanentAddress)
         data["telephone"] = text(MrtdTextDecoder.tagTelephone, passport.phoneNumber)
         data["textEncoding"] = recovered.encoding ?? NSNull()
-        // How much non-ASCII text this plugin put into the payload, counted as it was written.
-        //
-        // Arabic from DG11 kept arriving at the back office as question marks, and establishing
-        // where it was being lost took three rounds of device testing because nothing in the
-        // payload said what had left the handset. This does: if a stored payload reports a count
-        // here but its own name and address fields hold no non-ASCII characters, they were
-        // destroyed after this plugin returned — a lossy conversion somewhere downstream, which
-        // is what substitutes '?'. Nothing here converts: the plugin is UTF-8 throughout.
-        let nonAsciiCharacters: Int = Self.countNonAscii([
-            data["fullNameOfHolder"], data["otherNames"], data["personalSummary"],
-            data["placeOfBirth"], data["permanentAddress"], data["issuingAuthority"],
-            data["endorsementsAndObservations"]
-        ])
-        // Only what both platforms can compute to mean exactly the same thing. A count of
-        // "fields recovered" was dropped from this block for that reason: the two sides would have
-        // counted different sets, which is the class of defect this whole field exists to expose.
-        let textRecovery: [String: Any] = [
-            "encoding": recovered.encoding ?? NSNull(),
-            "nonAsciiCharacters": nonAsciiCharacters
-        ]
-        data["textRecovery"] = textRecovery
 
         // DG12 - Additional Document Details
         data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
@@ -469,6 +448,33 @@ class NfcDocumentReaderWrapper {
             readErrors["verification"] = error.localizedDescription
         }
         data["readErrors"] = readErrors
+
+        // How much non-ASCII text this plugin put into the payload, counted as it was written.
+        //
+        // Arabic from DG11 kept arriving at the back office as question marks, and establishing
+        // where it was being lost took three rounds of device testing because nothing in the
+        // payload said what had left the handset. This does: a stored payload reporting a count
+        // here while its own name and address fields hold no non-ASCII characters is contradicting
+        // itself — they were destroyed after this plugin returned, by a lossy conversion
+        // downstream, which is what substitutes '?'. Nothing here converts: this is UTF-8 from the
+        // data group to the callback.
+        //
+        // THIS MUST STAY LAST. The first version sat in the middle of the builder and read
+        // issuingAuthority and endorsementsAndObservations before they were assigned, so it
+        // silently reported 22 where Android reported 36 for the same card — a counter that
+        // undercounts is worse than none, because it is quoted in an argument about whose side
+        // lost the text. Counting from the finished dictionary is what makes that impossible.
+        // Only what both platforms compute identically goes in: a "fieldsRecovered" number was
+        // drafted and dropped because the two sides would have counted different sets.
+        let countedForNonAscii = ["fullNameOfHolder", "otherNames", "personalSummary",
+                                  "placeOfBirth", "permanentAddress", "issuingAuthority",
+                                  "endorsementsAndObservations"]
+        let nonAsciiCharacters: Int = Self.countNonAscii(countedForNonAscii.map { data[$0] })
+        let textRecovery: [String: Any] = [
+            "encoding": recovered.encoding ?? NSNull(),
+            "nonAsciiCharacters": nonAsciiCharacters
+        ]
+        data["textRecovery"] = textRecovery
 
         return data
     }
