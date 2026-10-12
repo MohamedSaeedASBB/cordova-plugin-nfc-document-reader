@@ -188,6 +188,33 @@ public class DocumentData {
                 + countNonAscii(otherNames.toArray(new String[0])));
         json.put("textRecovery", textRecovery);
 
+        // The same text again, UTF-8 then base64, so it survives a pipeline that cannot carry
+        // non-ASCII.
+        //
+        // This is a safety net, not a fix. The plugin emits the Arabic correctly — the raw data
+        // groups in the same payload prove the card holds it and textRecovery.nonAsciiCharacters
+        // records how much left here — but a lossy conversion downstream replaces each character
+        // with '?', and base64 is ASCII so it passes through untouched.
+        //
+        // The plain fields are left exactly as they are. Repairing them from this would hide the
+        // defect, and the column or connection that eats Arabic here will eat it from every other
+        // source too. Decode these only while that is being fixed.
+        JSONObject textBase64 = new JSONObject();
+        textBase64.put("fullNameOfHolder", toBase64(fullNameOfHolder));
+        JSONArray otherNamesB64 = new JSONArray();
+        for (String name : otherNames) {
+            for (String part : MrtdTextDecoder.splitComponents(name)) {
+                otherNamesB64.put(toBase64(part));
+            }
+        }
+        textBase64.put("otherNames", otherNamesB64);
+        textBase64.put("personalSummary", toBase64(personalSummary));
+        textBase64.put("placeOfBirth", toBase64(placeOfBirth));
+        textBase64.put("permanentAddress", toBase64(permanentAddress));
+        textBase64.put("issuingAuthority", toBase64(issuingAuthority));
+        textBase64.put("endorsementsAndObservations", toBase64(endorsementsAndObservations));
+        json.put("textBase64", textBase64);
+
         // Raw data groups, base64, only when requested. Keyed by data group number, plus "sod",
         // which is the one a backend needs to re-run passive authentication independently.
         if (rawDataGroups != null || rawSod != null) {
@@ -238,6 +265,13 @@ public class DocumentData {
      * is a tripwire for text being mangled in transit, not an analysis of what the text says.
      * Mirrors NfcDocumentReader.countNonAscii on iOS.
      */
+    /** UTF-8 then base64. Empty in, empty out, so the key is always present. */
+    private static String toBase64(String value) {
+        if (value == null || value.isEmpty()) return "";
+        return Base64.encodeToString(
+                value.getBytes(java.nio.charset.StandardCharsets.UTF_8), Base64.NO_WRAP);
+    }
+
     private static int countNonAscii(String... values) {
         int total = 0;
         for (String value : values) {

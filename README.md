@@ -1094,6 +1094,28 @@ one — it is UTF-8 from the data group to the callback. Look instead at:
 To confirm in a minute: log `result.fullNameOfHolder` in the JS node before sending it anywhere.
 Arabic in the console and `?` in the database tells you which side the loss is on.
 
+#### `textBase64` — a way through while that is fixed
+
+The same text, UTF-8 then base64, is returned alongside the plain fields:
+
+```json
+"otherNames":  ["CHAHRAZED", "??????"],
+"textBase64": {
+  "otherNames": ["Q0hBSFJBWkVE", "2LTZh9ix2LLYp9iv"]
+}
+```
+
+Base64 is ASCII, so it passes through a pipeline that cannot carry Arabic. Decoding
+`2LTZh9ix2LLYp9iv` as UTF-8 gives `شهرزاد`.
+
+**It is a safety net, not a fix**, and the plain fields are deliberately left as they are. Repairing
+them from this would hide the defect, and whatever eats Arabic here will eat it from every other
+source feeding the same column. Decode these only until the charset problem is resolved.
+
+Keys: `fullNameOfHolder`, `otherNames` (array), `personalSummary`, `placeOfBirth`,
+`permanentAddress`, `issuingAuthority`, `endorsementsAndObservations`. Always present; empty where
+the field is empty.
+
 **Read the `…Lines` arrays, not the joined strings.** ICAO separates the parts of a DG11 text field
 with `<`, and an issuer decides what the parts mean. An Algerian card uses it to carry both scripts
 of one value:

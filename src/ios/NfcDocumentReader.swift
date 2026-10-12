@@ -496,6 +496,27 @@ class NfcDocumentReaderWrapper {
         ]
         data["textRecovery"] = textRecovery
 
+        // The same text again, UTF-8 then base64, so it survives a pipeline that cannot carry
+        // non-ASCII.
+        //
+        // This is a safety net, not a fix. The plugin emits the Arabic correctly — the raw data
+        // groups in the same payload prove the card holds it and textRecovery.nonAsciiCharacters
+        // records how much left here — but a lossy conversion downstream replaces each character
+        // with '?', and base64 is ASCII so it passes through untouched.
+        //
+        // The plain fields are left exactly as they are. Repairing them from this would hide the
+        // defect, and the column or connection that eats Arabic here will eat it from every other
+        // source too. Decode these only while that is being fixed.
+        var textBase64: [String: Any] = [:]
+        for key in countedForNonAscii {
+            if let text = data[key] as? String {
+                textBase64[key] = Data(text.utf8).base64EncodedString()
+            } else if let list = data[key] as? [String] {
+                textBase64[key] = list.map { Data($0.utf8).base64EncodedString() }
+            }
+        }
+        data["textBase64"] = textBase64
+
         return data
     }
 
