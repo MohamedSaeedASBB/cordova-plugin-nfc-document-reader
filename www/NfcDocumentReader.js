@@ -61,6 +61,10 @@ var DEFAULT_LABELS = {
     "nfc.status.connecting":        "Connecting...",
     "nfc.status.authenticating":    "Authenticating...",
     "nfc.status.reading":           "Reading {dataGroup}...",    // {dataGroup}
+    // Apple's own NFC modal, which sits in front of the plugin's sheet for the whole read.
+    // iOS draws it; Android has no equivalent and ignores both keys.
+    "nfc.system.present":           "Hold your iPhone near the document.",
+    "nfc.system.error":            "Error: {detail}",   // {detail}, from the OS, always English
     "nfc.reading.title":            "Reading Document",
     "nfc.reading.description":      "Keep the document still against your phone.\nDo not move it until reading is complete.",
     "nfc.success.title":            "Success",
@@ -73,7 +77,6 @@ var DEFAULT_LABELS = {
 
     // ---- MRZ scanner ----
     "mrz.title":                    "Scan MRZ",
-    "mrz.hint":                     "Point camera at the MRZ lines",
     "mrz.hint.id":                  "Point camera at the MRZ lines on the back of your ID card",
     "mrz.hint.passport":            "Point camera at the MRZ lines on your passport data page",
     "mrz.status.detecting":         "Detecting... ({lines} lines found)",   // {lines}
@@ -82,18 +85,23 @@ var DEFAULT_LABELS = {
     "mrz.status.confirming":        "Hold steady — confirming ({seen}/{required})",  // {seen} {required}
     "mrz.status.cameraUnavailable": "Camera not available",
     "mrz.status.permissionRequired":"Camera permission is required to scan MRZ",
+    "mrz.result.title":             "MRZ Detected",
     "mrz.result.documentNumber":    "Document",
     "mrz.result.dateOfBirth":       "Date of Birth",
     "mrz.result.dateOfExpiry":      "Date of Expiry",
     "mrz.button.confirm":           "Confirm",
     "mrz.button.rescan":            "Re-scan",
     "mrz.button.cancel":            "Cancel",
+    "mrz.button.close":             "Close",   // the ✕ button; read aloud, not drawn
+
 
     // ---- Document capture ----
     "capture.title.id":             "Capture ID card",
     "capture.title.passport":       "Capture passport",
     "capture.title.proofOfAddress": "Proof of address",
-    "capture.step":                 "STEP {index} OF {total}",   // {index} {total}
+    "capture.title.document":       "Capture document",
+    "capture.step":                 "STEP {index} OF {total} — {label}",  // {index} {total} {label}
+    "capture.stepSingle":           "{label}",   // {label}; shown when there is only one step
     "capture.step.front.label":     "Front of the card",
     "capture.step.front.hint":      "Place the front of the card flat and fill the frame",
     "capture.step.back.label":      "Back of the card",
@@ -102,16 +110,25 @@ var DEFAULT_LABELS = {
     "capture.step.passport.hint":   "Open the passport at the photo page and fill the frame",
     "capture.step.document.label":  "Proof of address",
     "capture.step.document.hint":   "Photograph the whole page, including the name and address",
+    "capture.step.generic.label":   "Document",
+    "capture.step.generic.hint":    "Place the document flat and fill the frame",
     "capture.hint.review":          "Check the photo is sharp and the whole document is visible",
     "capture.hint.reviewConfirmed": "Document recognised — check it is sharp and complete",
     "capture.hint.checking":        "Checking the photo...",
     "capture.hint.saveFailed":      "That photo could not be saved. Please retake it.",
     "capture.hint.captureFailed":   "The photo could not be taken. Please try again.",
+    "capture.hint.readFailed":      "That photo could not be read. Please try again.",
+    "capture.hint.cameraUnavailable": "The camera could not be started.",
+    "capture.hint.rejected":        "This does not look like the document. Please retake it.",
+    "capture.hint.unrecognised":    "We could not recognise the document in this photo. Retake it, or use it anyway if it is correct.",
     "capture.permissionRequired":   "Camera permission is required to photograph the document.",
     "capture.button.capture":       "Capture",
     "capture.button.use":           "Use photo",
     "capture.button.retake":        "Retake",
     "capture.button.cancel":        "Cancel",
+    "capture.button.close":         "Close",   // the ✕ button; read aloud, not drawn
+    "capture.a11y.photo":           "Captured document",   // the review image, read aloud
+
 
     // ---- Liveness ----
     "liveness.title":               "Liveness Check",
@@ -133,7 +150,10 @@ var DEFAULT_LABELS = {
     "liveness.success":             "Done",
     "liveness.failed":              "Liveness check failed",
     "liveness.hint":                "Hold your phone at eye level in even lighting",
+    "liveness.permissionRequired":  "Camera permission is required for the liveness check.",
     "liveness.button.cancel":       "Cancel",
+    "liveness.button.close":        "Close",   // the ✕ button; read aloud, not drawn
+
 
     // ---- Messages delivered to the error callback ----
     // Keyed by the code the native layer reports, so the mapping lives here rather than being
@@ -143,9 +163,9 @@ var DEFAULT_LABELS = {
     "error.MULTIPLE_FACES":         "More than one face was visible. Please make sure you are alone in frame.",
     "error.FACE_CHANGED":           "The face in front of the camera changed during the check. Please try again.",
     "error.OVERALL_TIMEOUT":        "The liveness check took too long. Please try again.",
-    "error.CAPTURE_FAILED":         "We could not capture a clear photo. Please try again in better lighting.",
+    "error.NO_USABLE_PORTRAIT":     "We could not capture a clear photo. Please try again in better lighting.",
     "error.CAMERA_UNAVAILABLE":     "The camera could not be started.",
-    "error.CAMERA_PERMISSION":      "Camera permission is required.",
+    "error.CAMERA_PERMISSION_DENIED": "Camera permission is required.",
     "error.MRZ_CANCELLED":          "MRZ scan cancelled",
     "error.CAPTURE_CANCELLED":      "Document capture was cancelled.",
     "error.NFC_CANCELLED":          "NFC reading cancelled",
@@ -153,6 +173,15 @@ var DEFAULT_LABELS = {
     "error.NFC_DISABLED":           "NFC is turned off. Please enable NFC in your device settings.",
     "error.READ_FAILED":            "Unable to read document data. Please keep the document still and try again.",
     "error.AUTH_FAILED":            "Unable to read this document. Please ensure the document details are correct and try again.",
+    "error.TAG_NOT_SUPPORTED":      "This document's chip could not be detected. Please try repositioning it.",
+    "error.TAG_LOST":               "Connection lost. Please hold the document steady on your phone and try again.",
+    "error.COMM_ERROR":             "A communication error occurred. Please try again and keep the document still.",
+    "error.INVALID_MRZ":            "The document details provided are invalid. Please scan the document again.",
+    "error.CANCELLED":              "The check was cancelled.",
+    "error.LIVENESS_FAILED":        "The liveness check could not be completed. Please try again.",
+    "error.RESULT_ENCODING_FAILED": "The check finished but its result could not be prepared. Please try again.",
+    "error.NFC_START_FAILED":       "NFC scanning could not be started. Please return to the previous screen and try again.",
+    "error.FACE_MATCH_FAILED":      "The document was read but the face comparison failed. Please try again.",
     "error.UNKNOWN":                "An unexpected error occurred. Please try again."
 };
 

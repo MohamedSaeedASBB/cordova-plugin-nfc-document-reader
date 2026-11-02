@@ -27,7 +27,7 @@ class DocumentCaptureOptions {
 
     String captureType = "document";     // "document" | "proofOfAddress"
     String documentType;                 // "id" | "passport", null for proof of address
-    String title = "Capture document";
+    String title;
     List<Step> steps = new ArrayList<>();
     boolean runOcr = false;
 
@@ -82,7 +82,7 @@ class DocumentCaptureOptions {
         return imageOptions;
     }
 
-    static DocumentCaptureOptions fromJson(String json) {
+    static DocumentCaptureOptions fromJson(String json, Labels labels) {
         DocumentCaptureOptions options = new DocumentCaptureOptions();
         if (json == null) return options;
         try {
@@ -101,7 +101,7 @@ class DocumentCaptureOptions {
                     if (value != null && !value.isEmpty()) options.expectedIdentifiers.add(value);
                 }
             }
-            options.title = root.optString("title", options.title);
+            options.title = root.optString("title", null);
             options.runOcr = root.optBoolean("ocr", false);
             options.maxImageDimension = root.optInt("maxImageDimension", options.maxImageDimension);
             options.maxImageBytes = root.optInt("maxImageBytes", options.maxImageBytes);
@@ -117,17 +117,21 @@ class DocumentCaptureOptions {
                     if (step == null) continue;
                     options.steps.add(new Step(
                             step.optString("key", "page" + (i + 1)),
-                            step.optString("label", "Document"),
-                            step.optString("hint", "Place the document flat and fill the frame")));
+                            step.optString("label", labels.text("capture.step.generic.label")),
+                            step.optString("hint", labels.text("capture.step.generic.hint"))));
                 }
             }
         } catch (Exception ignored) {
             // Fall through to the defaults below; a malformed options object must not leave the
             // activity with no steps to run.
         }
+        if (options.title == null || options.title.isEmpty()) {
+            options.title = labels.text("capture.title.document");
+        }
         if (options.steps.isEmpty()) {
-            options.steps.add(new Step("document", "Document",
-                    "Place the document flat and fill the frame"));
+            options.steps.add(new Step("document",
+                    labels.text("capture.step.generic.label"),
+                    labels.text("capture.step.generic.hint")));
         }
         return options;
     }

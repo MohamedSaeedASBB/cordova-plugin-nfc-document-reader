@@ -1,6 +1,6 @@
 # Labels
 
-Every string the plugin's screens show, in three bundles. 89 keys each.
+Every string the plugin's screens show, in three bundles. 113 keys each.
 
 | | |
 |---|---|
@@ -46,6 +46,29 @@ It reports three things that are invisible when reading the file and obvious to 
 Placeholders are matched by name, not position, so a translation may reorder them. Arabic
 frequently needs to.
 
+## Checking the screens
+
+```
+node tools/labels/check-native.js
+```
+
+A correct bundle is not enough on its own. This one checks the other half — that each screen
+actually asks for the keys the bundle defines:
+
+- **a key set on a view no layout defines.** The Android screens replace their English by looking
+  a view up by name, and a name nothing answers to used to be skipped in silence. That is how
+  "Scan MRZ", "MRZ Detected" and "Liveness Check" stayed English on an Arabic screen while every
+  other string beside them translated. Nothing in the code or in the bundle showed it; it took a
+  screenshot from a device.
+- **a key the native code asks for that the bundle has no entry for.** It reaches the customer as
+  `capture.hint.rejected` in the middle of a sentence.
+- **a failure code with no message.** `CANCELLED`, `NO_USABLE_PORTRAIT` and
+  `CAMERA_PERMISSION_DENIED` were all reported to the caller with no translation behind them.
+- **a key nothing asks for**, which is how a label goes stale after a screen is reworked.
+
+Run both before a release. Between them they cover the bundle and the screens; either alone
+leaves the gap the other catches.
+
 ## Direction is not optional for Arabic
 
 `setDirection("rtl")` is separate from the bundle and has to be set as well. Arabic strings in a
@@ -64,5 +87,23 @@ in one place and a key that is missing renders as its own name rather than as En
 English in an Arabic screen is the failure that reaches production; a visible `mrz.title` is the
 one that gets fixed on the first run.
 
-After adding one, regenerate `en.json` and re-run the checker over `ar.json` and `fr.json` — it
-will tell you exactly which bundles now have a gap.
+After adding one, regenerate `en.json` and re-run both checkers — between them they will tell you
+which bundles now have a gap and whether the screen can actually reach the new key.
+
+A key for text that is drawn by a layout rather than built in code needs an `android:id` on that
+view, because that id is the only thing connecting the two. `check-native.js` fails if it is
+missing.
+
+## What is not in here
+
+Messages the plugin hands to your `error` callback **are** in here, keyed by the failure code
+(`error.AUTH_FAILED`, `error.TAG_LOST`, …), so the NFC sheet and the callback cannot disagree.
+
+Two things are deliberately left in English:
+
+- **Integration errors** — "Invalid capture options", "Invalid MRZ data. Required: …", and any
+  message carrying an exception's text. They are for whoever is wiring the plugin up, and they go
+  to a log, not to a customer.
+- **`ISSUE_TEXT` in `www/NfcDocumentReader.js`** — the plain-language descriptions of passive
+  authentication findings that travel in the result payload. They describe the document, not the
+  screen, and your backend decides whether a customer ever sees one.

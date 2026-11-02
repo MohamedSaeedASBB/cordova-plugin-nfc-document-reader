@@ -776,9 +776,9 @@ captured before it existed, so archived results can be brought up to the current
 
 ## Labels and languages
 
-Every string the plugin's screens show is overridable, in one flat bundle. 89 keys, covering the
-NFC sheet, the MRZ scanner, document capture, the liveness check and the messages delivered to the
-error callback.
+Every string the plugin's screens show is overridable, in one flat bundle. 113 keys, covering the
+NFC sheet, the MRZ scanner, document capture, the liveness check, the spoken labels on the icon
+buttons, Apple's own NFC modal on iOS, and the messages delivered to the error callback.
 
 ```javascript
 NfcDocumentReader.setLabels({
@@ -814,7 +814,14 @@ The defaults live in `DEFAULT_LABELS` in `www/NfcDocumentReader.js` and nowhere 
 layers hold none and are handed the resolved bundle at call time. Two hardcoded English copies
 would drift, and a label that drifts in a language nobody on the team reads goes unnoticed until a
 customer reports it. `node tools/labels/check.js docs/labels/ar.json` checks a bundle for missing
-keys, dropped `{placeholders}` and typos.
+keys, dropped `{placeholders}` and typos; `node tools/labels/check-native.js` checks the other
+half — that every screen can actually reach the keys, and that no failure code is reported without
+a message behind it. Run both before a release.
+
+**You do not fork the plugin to translate it.** `docs/labels/*.json` are reference copies to paste
+into your app; each application passes its own bundle at runtime, so two apps on the same plugin
+version can show different wording and a reworded prompt ships with the app rather than with a
+plugin release.
 
 ## `verification` — the block to build logic on
 

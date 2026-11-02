@@ -169,6 +169,7 @@ class LivenessCameraViewController: UIViewController {
         topBar.addSubview(titleLabel)
 
         closeButton.setTitle("\u{2715}", for: .normal)
+        closeButton.accessibilityLabel = labels.text("liveness.button.close")
         closeButton.setTitleColor(.white, for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 22)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -279,13 +280,14 @@ class LivenessCameraViewController: UIViewController {
                         self?.startCamera()
                     } else {
                         self?.finish(failure: "CAMERA_PERMISSION_DENIED",
-                                     message: "Camera permission is required for the liveness check.")
+                                     message: self?.labels.text("error.CAMERA_PERMISSION_DENIED")
+                                              ?? "error.CAMERA_PERMISSION_DENIED")
                     }
                 }
             }
         default:
             finish(failure: "CAMERA_PERMISSION_DENIED",
-                   message: "Camera permission is required for the liveness check.")
+                   message: labels.text("error.CAMERA_PERMISSION_DENIED"))
         }
     }
 
@@ -295,7 +297,7 @@ class LivenessCameraViewController: UIViewController {
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
               let input = try? AVCaptureDeviceInput(device: device) else {
-            finish(failure: "CAMERA_UNAVAILABLE", message: "Could not start the front camera.")
+            finish(failure: "CAMERA_UNAVAILABLE", message: labels.text("error.CAMERA_UNAVAILABLE"))
             return
         }
 
@@ -331,7 +333,7 @@ class LivenessCameraViewController: UIViewController {
     // MARK: - Actions
 
     @objc private func cancelTapped() {
-        finish(failure: "CANCELLED", message: "Liveness check cancelled")
+        finish(failure: "CANCELLED", message: labels.text("error.CANCELLED"))
     }
 
     // MARK: - UI updates
@@ -773,25 +775,6 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
     /// The message for a failure code, from the bundle, so a translated screen does not end on an
     /// English sentence.
     private func failureMessage(_ code: String?) -> String {
-        return labels.text("error." + (code ?? "UNKNOWN"))
-    }
-
-    static func legacyFailureMessage(_ code: String?) -> String {
-        switch code {
-        case "NO_FACE_TIMEOUT":
-            return "We could not see your face. Please try again in better lighting."
-        case "CHALLENGE_TIMEOUT":
-            return "The on-screen instruction was not completed in time. Please try again."
-        case "MULTIPLE_FACES":
-            return "More than one face was visible. Please make sure you are alone in frame."
-        case "FACE_CHANGED":
-            return "The face in front of the camera changed during the check. Please try again."
-        case "OVERALL_TIMEOUT":
-            return "The liveness check took too long. Please try again."
-        case "NO_USABLE_PORTRAIT":
-            return "We could not capture a clear photo. Please try again in better lighting."
-        default:
-            return "The liveness check could not be completed. Please try again."
-        }
+        return labels.text("error." + (code ?? "LIVENESS_FAILED"))
     }
 }

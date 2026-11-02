@@ -553,7 +553,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         // Nothing collected at all: this is a failure, not a partial result.
         if (payload == null || !payload.has("mrz")) {
-            callback.error(errorMessage != null ? errorMessage : "Capture cancelled.");
+            callback.error(errorMessage != null ? errorMessage : labels.text("error.CAPTURE_CANCELLED"));
             return;
         }
 
@@ -630,7 +630,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (captured) {
             callback.success(result);
         } else {
-            callback.error("Document capture was cancelled.");
+            callback.error(labels.text("error.CAPTURE_CANCELLED"));
         }
     }
 
@@ -703,7 +703,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (ok) {
             livenessCallbackContext.success(result);
         } else {
-            livenessCallbackContext.error(errorMsg != null ? errorMsg : "Liveness check cancelled");
+            livenessCallbackContext.error(errorMsg != null ? errorMsg : labels.text("error.CANCELLED"));
         }
         livenessCallbackContext = null;
     }
@@ -740,7 +740,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         if (callback == null) return;
 
         if (!livenessOk) {
-            callback.error(errorMsg != null ? errorMsg : "Liveness check cancelled");
+            callback.error(errorMsg != null ? errorMsg : labels.text("error.CANCELLED"));
             return;
         }
 
@@ -792,7 +792,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     sendFinalPayload(callback, documentJson, null);
                 } catch (Exception e) {
                     Log.e(TAG, "Error building liveness comparison result: " + e.getMessage(), e);
-                    callback.error("The document was read but the face comparison failed. Please try again.");
+                    callback.error(labels.text("error.FACE_MATCH_FAILED"));
                 }
             }
         });
@@ -883,7 +883,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 finishDocLiveness("mrz", errorMsg != null ? errorMsg : "MRZ scan cancelled");
                 return;
             }
-            mrzScanCallbackContext.error(errorMsg != null ? errorMsg : "MRZ scan cancelled");
+            mrzScanCallbackContext.error(errorMsg != null ? errorMsg : labels.text("error.MRZ_CANCELLED"));
         }
         mrzScanCallbackContext = null;
     }
@@ -893,11 +893,11 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     private void readNFC(JSONArray args, CallbackContext callbackContext) {
         adoptLabels(args.optJSONObject(1));
         if (nfcAdapter == null) {
-            callbackContext.error("NFC is not available on this device.");
+            callbackContext.error(labels.text("error.NFC_UNAVAILABLE"));
             return;
         }
         if (!nfcAdapter.isEnabled()) {
-            callbackContext.error("NFC is turned off. Please enable NFC in your device settings.");
+            callbackContext.error(labels.text("error.NFC_DISABLED"));
             return;
         }
 
@@ -976,7 +976,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         dismissNfcDialog();
 
         if (nfcCallbackContext != null) {
-            nfcCallbackContext.error("NFC reading cancelled");
+            nfcCallbackContext.error(labels.text("error.NFC_CANCELLED"));
             nfcCallbackContext = null;
         }
 
@@ -1047,7 +1047,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                             dismissNfcDialog();
 
                             if (nfcCallbackContext != null) {
-                                nfcCallbackContext.error("NFC reading cancelled");
+                                nfcCallbackContext.error(labels.text("error.NFC_CANCELLED"));
                                 nfcCallbackContext = null;
                             }
                         }
@@ -1128,6 +1128,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     documentReader.setPassiveAuthentication(cordova.getActivity().getApplicationContext(),
                             parsePassiveAuthConfig(pendingPassiveAuthConfig));
                     documentReader.setIncludeRawDataGroups(pendingIncludeRawDataGroups);
+                    documentReader.setLabels(labels);
 
                     documentReader.readDocument(tag, pendingDocumentNumber,
                         pendingDateOfBirth, pendingDateOfExpiry,
@@ -1211,7 +1212,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                         sendFinalPayload(callback, result, null);
                     } else {
                         String userMessage = documentReader.getError();
-                        if (userMessage == null) userMessage = "An unexpected error occurred. Please try again.";
+                        if (userMessage == null) userMessage = labels.text("error.UNKNOWN");
 
                         // Log diagnostics to Supabase (fire-and-forget)
                         DiagnosticsLogger.logError(
@@ -1445,8 +1446,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         dismissNfcDialog();
         if (callback != null) {
             nfcCallbackContext = null;
-            callback.error("Could not start NFC scanning. Please return to the previous screen "
-                + "and try again.");
+            callback.error(labels.text("error.NFC_START_FAILED"));
         }
     }
 

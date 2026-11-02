@@ -41,6 +41,7 @@ class MrzCameraViewController: UIViewController {
     private let bottomPanel = UIView()
     private let statusLabel = UILabel()
     private let resultCard = UIView()
+    private let resultHeading = UILabel()
     private let resultLabel = UILabel()
     private let confirmButton = UIButton(type: .system)
     private let rescanButton = UIButton(type: .system)
@@ -85,6 +86,7 @@ class MrzCameraViewController: UIViewController {
         topBar.addSubview(titleLabel)
 
         closeButton.setTitle("\u{2715}", for: .normal)
+        closeButton.accessibilityLabel = labels.text("mrz.button.close")
         closeButton.setTitleColor(.white, for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 22)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -99,9 +101,8 @@ class MrzCameraViewController: UIViewController {
         guideFrame.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(guideFrame)
 
-        guideLabel.text = documentType == "passport"
-            ? "Position the MRZ lines inside this frame"
-            : "Position the back of your ID card inside this frame"
+        guideLabel.text = labels.text(documentType == "passport"
+            ? "mrz.hint.passport" : "mrz.hint.id")
         guideLabel.textColor = .white
         guideLabel.font = .systemFont(ofSize: 13)
         guideLabel.textAlignment = .center
@@ -128,6 +129,14 @@ class MrzCameraViewController: UIViewController {
         resultCard.isHidden = true
         resultCard.translatesAutoresizingMaskIntoConstraints = false
         bottomPanel.addSubview(resultCard)
+
+        resultHeading.text = labels.text("mrz.result.title")
+        resultHeading.textColor = UIColor(red: 0.30, green: 0.69, blue: 0.31, alpha: 1.0)
+        resultHeading.font = .boldSystemFont(ofSize: 16)
+        resultHeading.textAlignment = .center
+        resultHeading.numberOfLines = 0
+        resultHeading.translatesAutoresizingMaskIntoConstraints = false
+        resultCard.addSubview(resultHeading)
 
         resultLabel.textColor = .white
         resultLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -208,7 +217,11 @@ class MrzCameraViewController: UIViewController {
             resultCard.leadingAnchor.constraint(equalTo: bottomPanel.leadingAnchor, constant: 16),
             resultCard.trailingAnchor.constraint(equalTo: bottomPanel.trailingAnchor, constant: -16),
 
-            resultLabel.topAnchor.constraint(equalTo: resultCard.topAnchor, constant: 12),
+            resultHeading.topAnchor.constraint(equalTo: resultCard.topAnchor, constant: 12),
+            resultHeading.leadingAnchor.constraint(equalTo: resultCard.leadingAnchor, constant: 12),
+            resultHeading.trailingAnchor.constraint(equalTo: resultCard.trailingAnchor, constant: -12),
+
+            resultLabel.topAnchor.constraint(equalTo: resultHeading.bottomAnchor, constant: 8),
             resultLabel.leadingAnchor.constraint(equalTo: resultCard.leadingAnchor, constant: 12),
             resultLabel.trailingAnchor.constraint(equalTo: resultCard.trailingAnchor, constant: -12),
             resultLabel.bottomAnchor.constraint(equalTo: resultCard.bottomAnchor, constant: -12),

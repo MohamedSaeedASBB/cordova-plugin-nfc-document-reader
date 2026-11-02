@@ -22,6 +22,7 @@
         android:paddingEnd="8dp">
 
         <TextView
+            android:id="@+id/titleText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_centerVertical="true"
@@ -105,6 +106,7 @@
                 android:layout_marginBottom="12dp">
 
                 <TextView
+                    android:id="@+id/resultHeading"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="MRZ Detected"

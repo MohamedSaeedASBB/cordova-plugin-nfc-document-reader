@@ -44,8 +44,10 @@ import org.json.JSONObject;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -164,6 +166,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
         applyLabels("titleText", "liveness.title",
                     "hintText", "liveness.hint",
                     "cancelButton", "liveness.button.cancel");
+        closeButton.setContentDescription(labels.text("liveness.button.close"));
 
         SystemBarInsets.apply(findViewById(android.R.id.content),
                 findViewById(getResId("topBar")),
@@ -205,9 +208,9 @@ public class LivenessCameraActivity extends AppCompatActivity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startCamera();
             } else {
-                Toast.makeText(this, "Camera permission is required for the liveness check",
+                Toast.makeText(this, labels.text("liveness.permissionRequired"),
                         Toast.LENGTH_LONG).show();
-                cancel("Camera permission denied");
+                cancel(null);
             }
         }
     }
@@ -278,7 +281,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
 
             } catch (Exception e) {
                 Log.e(TAG, "Camera bind failed: " + e.getMessage());
-                fail("CAMERA_UNAVAILABLE", "Could not start the front camera.");
+                fail("CAMERA_UNAVAILABLE", labels.text("error.CAMERA_UNAVAILABLE"));
             }
         }, ContextCompat.getMainExecutor(this));
     }
@@ -471,8 +474,10 @@ public class LivenessCameraActivity extends AppCompatActivity {
             return "";
         }
         List<LivenessDetector.Challenge> order = detector.getChallengeOrder();
-        int index = order.indexOf(challenge) + 1;
-        return "Step " + index + " of " + order.size();
+        Map<String, String> values = new HashMap<>();
+        values.put("index", String.valueOf(order.indexOf(challenge) + 1));
+        values.put("total", String.valueOf(order.size()));
+        return labels.text("liveness.step", values);
     }
 
     // ==================== Completion ====================
@@ -487,7 +492,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
             } catch (JSONException e) {
                 Log.e(TAG, "Error building liveness result: " + e.getMessage());
                 runOnUiThread(() -> fail("RESULT_ENCODING_FAILED",
-                        "The liveness check completed but its result could not be encoded."));
+                        labels.text("error.RESULT_ENCODING_FAILED")));
                 return;
             }
 
@@ -641,7 +646,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
     }
 
     private void cancel(String message) {
-        fail("CANCELLED", message);
+        fail("CANCELLED", labels.text("error.CANCELLED"));
     }
 
     private void releaseFrames() {
@@ -658,26 +663,17 @@ public class LivenessCameraActivity extends AppCompatActivity {
 
     // ==================== Helpers ====================
 
+    /**
+     * The message for a failure code, from the bundle, so a translated screen does not end on an
+     * English sentence.
+     *
+     * This used to be a switch here and a second identical switch in Swift. They are the kind of
+     * pair that drifts: tools/labels/check-native.js now fails the build if a code is reported
+     * that the bundle has no message for, which is how NO_USABLE_PORTRAIT and CANCELLED were
+     * found reaching the caller with no translation at all.
+     */
     private String failureMessage(String code) {
-        if (code == null) {
-            return "The liveness check could not be completed. Please try again.";
-        }
-        switch (code) {
-            case "NO_FACE_TIMEOUT":
-                return "We could not see your face. Please try again in better lighting.";
-            case "CHALLENGE_TIMEOUT":
-                return "The on-screen instruction was not completed in time. Please try again.";
-            case "MULTIPLE_FACES":
-                return "More than one face was visible. Please make sure you are alone in frame.";
-            case "FACE_CHANGED":
-                return "The face in front of the camera changed during the check. Please try again.";
-            case "OVERALL_TIMEOUT":
-                return "The liveness check took too long. Please try again.";
-            case "NO_USABLE_PORTRAIT":
-                return "We could not capture a clear photo. Please try again in better lighting.";
-            default:
-                return "The liveness check could not be completed. Please try again.";
-        }
+        return labels.text("error." + (code != null ? code : "LIVENESS_FAILED"));
     }
 
     static String challengeName(LivenessDetector.Challenge challenge) {
@@ -719,10 +715,12 @@ public class LivenessCameraActivity extends AppCompatActivity {
         labels.applyDirection(findViewById(android.R.id.content));
         for (int i = 0; i + 1 < viewAndKeyPairs.length; i += 2) {
             int id = getResources().getIdentifier(viewAndKeyPairs[i], "id", getPackageName());
-            if (id == 0) continue;
-            android.view.View view = findViewById(id);
+            android.view.View view = id == 0 ? null : findViewById(id);
             if (view instanceof android.widget.TextView) {
                 ((android.widget.TextView) view).setText(labels.text(viewAndKeyPairs[i + 1]));
+            } else {
+                Log.w(TAG, "No TextView named " + viewAndKeyPairs[i]
+                        + "; '" + viewAndKeyPairs[i + 1] + "' keeps its layout text");
             }
         }
     }

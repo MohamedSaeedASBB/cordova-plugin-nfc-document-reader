@@ -187,18 +187,34 @@ public class MrzCameraActivity extends AppCompatActivity {
      */
     private void applyLabels() {
         setLabel("titleText", "mrz.title");
+        setLabel("resultHeading", "mrz.result.title");
         setLabel("confirmButton", "mrz.button.confirm");
         setLabel("rescanButton", "mrz.button.rescan");
         setLabel("cancelButton", "mrz.button.cancel");
+        closeButton.setContentDescription(labels.text("mrz.button.close"));
     }
 
+    /**
+     * A view that the layout never gave an id to is a label that can never be replaced, and the
+     * English it ships with reaches the customer. That happened here: the title and the result
+     * heading were both addressed by a name no view answered to, and this method returned quietly.
+     * It now says so, and tools/labels/check.js fails the build on the same mismatch.
+     */
     private void setLabel(String viewName, String key) {
         int id = getResId(viewName);
-        if (id == 0) return;
-        android.view.View view = findViewById(id);
-        if (view instanceof android.widget.TextView) {
-            ((android.widget.TextView) view).setText(labels.text(key));
+        android.view.View view = id == 0 ? null : findViewById(id);
+        if (!(view instanceof android.widget.TextView)) {
+            Log.w(TAG, "No TextView named " + viewName + "; '" + key + "' keeps its layout text");
+            return;
         }
+        ((android.widget.TextView) view).setText(labels.text(key));
+    }
+
+    private String confirmingText(int seen) {
+        Map<String, String> values = new HashMap<>();
+        values.put("seen", String.valueOf(seen));
+        values.put("required", String.valueOf(requiredMatches));
+        return labels.text("mrz.status.confirming", values);
     }
 
     private String detectingText(int lineCount) {
@@ -226,7 +242,8 @@ public class MrzCameraActivity extends AppCompatActivity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startCamera();
             } else {
-                Toast.makeText(this, "Camera permission is required to scan MRZ", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, labels.text("mrz.status.permissionRequired"),
+                        Toast.LENGTH_LONG).show();
                 Intent data = new Intent();
                 data.putExtra("error", "Camera permission denied");
                 setResult(Activity.RESULT_CANCELED, data);
@@ -293,8 +310,7 @@ public class MrzCameraActivity extends AppCompatActivity {
                 if (result.isSuccess() && !mrzDetected) {
                     if (!agreesWithCandidate(result)) {
                         final int seen = candidateMatches;
-                        runOnUiThread(() -> statusText.setText(
-                                "Hold steady — confirming (" + seen + "/" + requiredMatches + ")"));
+                        runOnUiThread(() -> statusText.setText(confirmingText(seen)));
                         return;
                     }
                     mrzDetected = true;
@@ -344,9 +360,9 @@ public class MrzCameraActivity extends AppCompatActivity {
         // Show result card
         resultContainer.setVisibility(View.VISIBLE);
         resultText.setText(
-            "Document: " + result.documentNumber +
-            "\nDate of Birth: " + result.dateOfBirth +
-            "\nDate of Expiry: " + result.dateOfExpiry
+            labels.text("mrz.result.documentNumber") + ": " + result.documentNumber +
+            "\n" + labels.text("mrz.result.dateOfBirth") + ": " + result.dateOfBirth +
+            "\n" + labels.text("mrz.result.dateOfExpiry") + ": " + result.dateOfExpiry
         );
 
         // Show confirm and re-scan buttons
