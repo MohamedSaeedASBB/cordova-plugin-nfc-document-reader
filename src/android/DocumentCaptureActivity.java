@@ -44,7 +44,9 @@ import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -130,11 +132,13 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                     "useButton", "capture.button.use",
                     "retakeButton", "capture.button.retake",
                     "cancelButton", "capture.button.cancel");
+        closeButton.setContentDescription(labels.text("capture.button.close"));
+        reviewImage.setContentDescription(labels.text("capture.a11y.photo"));
 
         SystemBarInsets.apply(findViewById(android.R.id.content),
                 findViewById(getResId("topBar")), findViewById(getResId("bottomPanel")));
 
-        options = DocumentCaptureOptions.fromJson(getIntent().getStringExtra(EXTRA_OPTIONS));
+        options = DocumentCaptureOptions.fromJson(getIntent().getStringExtra(EXTRA_OPTIONS), labels);
         titleText.setText(options.title);
         setGuideFrameBorder();
 
@@ -171,7 +175,7 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
-            Toast.makeText(this, "Camera permission is required to photograph the document.",
+            Toast.makeText(this, labels.text("capture.permissionRequired"),
                     Toast.LENGTH_LONG).show();
             cancel();
         }
@@ -197,7 +201,8 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                         preview, imageCapture);
             } catch (Exception e) {
                 Log.e(TAG, "Camera could not be started: " + e.getMessage(), e);
-                Toast.makeText(this, "The camera could not be started.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, labels.text("capture.hint.cameraUnavailable"),
+                        Toast.LENGTH_LONG).show();
                 cancel();
             }
         }, ContextCompat.getMainExecutor(this));
@@ -224,7 +229,7 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                     runOnUiThread(() -> {
                         captureButton.setEnabled(true);
                         Toast.makeText(DocumentCaptureActivity.this,
-                                "That photo could not be read. Please try again.",
+                                labels.text("capture.hint.readFailed"),
                                 Toast.LENGTH_SHORT).show();
                     });
                     return;
@@ -254,7 +259,7 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     captureButton.setEnabled(true);
                     Toast.makeText(DocumentCaptureActivity.this,
-                            "The photo could not be taken. Please try again.",
+                            labels.text("capture.hint.captureFailed"),
                             Toast.LENGTH_SHORT).show();
                 });
             }
@@ -284,9 +289,12 @@ public class DocumentCaptureActivity extends AppCompatActivity {
     private void showStep() {
         DocumentCaptureOptions.Step step = options.steps.get(stepIndex);
         hintText.setText(step.hint);
-        stepText.setText(options.steps.size() > 1
-                ? "Step " + (stepIndex + 1) + " of " + options.steps.size() + " — " + step.label
-                : step.label);
+        Map<String, String> values = new HashMap<>();
+        values.put("index", String.valueOf(stepIndex + 1));
+        values.put("total", String.valueOf(options.steps.size()));
+        values.put("label", step.label);
+        stepText.setText(labels.text(
+                options.steps.size() > 1 ? "capture.step" : "capture.stepSingle", values));
         showCamera();
     }
 
@@ -319,10 +327,8 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         } else if (confirmed) {
             hintText.setText(labels.text("capture.hint.reviewConfirmed"));
         } else {
-            hintText.setText(options.requireDocument
-                    ? "This does not look like the document. Please retake it."
-                    : "We could not recognise the document in this photo. Retake it, or use it "
-                      + "anyway if it is correct.");
+            hintText.setText(labels.text(options.requireDocument
+                    ? "capture.hint.rejected" : "capture.hint.unrecognised"));
         }
         // In strict mode a shot that failed cannot be kept; the only way on is another attempt.
         useButton.setVisibility(!confirmed && options.requireDocument ? View.GONE : View.VISIBLE);
@@ -366,7 +372,7 @@ public class DocumentCaptureActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 useButton.setEnabled(true);
                 if (!entry.has("imageBase64")) {
-                    Toast.makeText(this, "That photo could not be saved. Please retake it.",
+                    Toast.makeText(this, labels.text("capture.hint.saveFailed"),
                             Toast.LENGTH_SHORT).show();
                     showCamera();
                     return;
@@ -500,10 +506,12 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         labels.applyDirection(findViewById(android.R.id.content));
         for (int i = 0; i + 1 < viewAndKeyPairs.length; i += 2) {
             int id = getResources().getIdentifier(viewAndKeyPairs[i], "id", getPackageName());
-            if (id == 0) continue;
-            android.view.View view = findViewById(id);
+            android.view.View view = id == 0 ? null : findViewById(id);
             if (view instanceof android.widget.TextView) {
                 ((android.widget.TextView) view).setText(labels.text(viewAndKeyPairs[i + 1]));
+            } else {
+                Log.w(TAG, "No TextView named " + viewAndKeyPairs[i]
+                        + "; '" + viewAndKeyPairs[i + 1] + "' keeps its layout text");
             }
         }
     }

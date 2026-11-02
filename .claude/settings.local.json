@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "WebSearch",
+      "WebFetch(domain:developers.google.com)",
+      "Bash(javac -version)",
+      "Bash(javac *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh repo *)",
+      "Bash(git push *)",
+      "Bash(cd *)",
+      "Bash(python3 -)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)",
+      "Bash(git ls-remote *)",
+      "Bash(node --check www/NfcDocumentReader.js)",
+      "Bash(xmllint --xpath \"count\\(//resource-file[contains\\(@src,'models'\\)]\\)\" plugin.xml)",
+      "Bash(git fetch *)"
+    ]
+  }
+}

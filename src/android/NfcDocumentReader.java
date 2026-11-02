@@ -39,6 +39,19 @@ import java.util.Set;
  */
 public class NfcDocumentReader {
 
+    /**
+     * The host application's wording for the failures a customer sees.
+     *
+     * Set per read by the plugin. The messages are looked up by the same code that is reported to
+     * the caller, so the bottom sheet and the error callback cannot disagree, and a bank that
+     * wants different wording changes it in one bundle rather than in Java and Swift.
+     */
+    private Labels labels = Labels.empty();
+
+    void setLabels(Labels labels) {
+        if (labels != null) this.labels = labels;
+    }
+
     private static final String TAG = "NfcDocumentReader";
     private static final int MAX_TAG_TIMEOUT = 20000; // 20 seconds
 
@@ -135,7 +148,7 @@ public class NfcDocumentReader {
             IsoDep isoDep = IsoDep.get(tag);
             if (isoDep == null) {
                 this.errorCode = "TAG_NOT_SUPPORTED";
-                this.error = "This document's chip could not be detected. Please try repositioning it.";
+                this.error = labels.text("error.TAG_NOT_SUPPORTED");
                 this.technicalError = "Tag does not support IsoDep. Tech list: " + java.util.Arrays.toString(tag.getTechList());
                 return;
             }
@@ -210,7 +223,7 @@ public class NfcDocumentReader {
                 bacKey = new BACKey(paddedDocNum, dob, exp);
             } catch (IllegalArgumentException e) {
                 this.errorCode = "INVALID_MRZ";
-                this.error = "The document details provided are invalid. Please scan the document again.";
+                this.error = labels.text("error.INVALID_MRZ");
                 this.technicalError = "Invalid BAC key parameters: " + e.getMessage() +
                     " | Doc#: " + documentNumber + ", DOB: " + dateOfBirth + ", Exp: " + dateOfExpiry;
                 return;
@@ -363,7 +376,7 @@ public class NfcDocumentReader {
                     Log.e(TAG, "All BAC attempts failed", lastError);
                     String lastErrMsg = lastError != null ? lastError.getMessage() : "unknown";
                     this.errorCode = "AUTH_FAILED";
-                    this.error = "Unable to read this document. Please ensure the document details are correct and try again.";
+                    this.error = labels.text("error.AUTH_FAILED");
                     this.technicalError = "BAC error: " + lastErrMsg +
                         " | Doc#: " + documentNumber + " (padded: " + paddedDocNum + ")" +
                         " | DOB: " + dateOfBirth + " | Exp: " + dateOfExpiry +
@@ -477,7 +490,7 @@ public class NfcDocumentReader {
 
             if (!authVerified) {
                 this.errorCode = "READ_FAILED";
-                this.error = "Unable to read document data. Please keep the document still and try again.";
+                this.error = labels.text("error.READ_FAILED");
                 this.technicalError = "Auth appeared to succeed (PACE=" + paceSucceeded + ", BAC=" + bacSucceeded +
                     ") but EF.COM unreadable after all fallback attempts" +
                     " | Doc#: " + documentNumber + " | DOB: " + dateOfBirth + " | Exp: " + dateOfExpiry;
@@ -717,17 +730,17 @@ public class NfcDocumentReader {
         } catch (android.nfc.TagLostException e) {
             Log.e(TAG, "Tag was lost during reading", e);
             this.errorCode = "TAG_LOST";
-            this.error = "Connection lost. Please hold the document steady on your phone and try again.";
+            this.error = labels.text("error.TAG_LOST");
             this.technicalError = "TagLostException: " + e.getMessage();
         } catch (java.io.IOException e) {
             Log.e(TAG, "IO error during NFC reading", e);
             this.errorCode = "COMM_ERROR";
-            this.error = "A communication error occurred. Please try again and keep the document still.";
+            this.error = labels.text("error.COMM_ERROR");
             this.technicalError = "IOException: " + e.getMessage();
         } catch (Exception e) {
             Log.e(TAG, "Error reading document: " + e.getMessage(), e);
             this.errorCode = "UNKNOWN";
-            this.error = "An unexpected error occurred. Please try again.";
+            this.error = labels.text("error.UNKNOWN");
             this.technicalError = e.getClass().getSimpleName() + ": " + (e.getMessage() != null ? e.getMessage() : "no message");
         }
     }

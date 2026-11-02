@@ -8,6 +8,14 @@ import NFCPassportReader
 /// Wrapper around NFCPassportReader library for reading MRTD NFC chips on iOS.
 class NfcDocumentReaderWrapper {
 
+    /// The host application's wording for everything this read puts on screen.
+    ///
+    /// That includes Apple's own NFC modal, which sits in front of the plugin's bottom sheet for
+    /// the whole read: its text comes from `customDisplayMessage` below, so leaving it hardcoded
+    /// showed an English system sheet over an Arabic application. The failure messages are looked
+    /// up by the same code reported to the caller, so the sheet and the callback cannot disagree.
+    var labels = Labels(nil, direction: nil)
+
     typealias ProgressHandler = (_ state: String, _ dgNumber: Int?, _ dgName: String?) -> Void
     typealias CompletionHandler = (_ result: [String: Any]?, _ error: String?) -> Void
 
@@ -88,25 +96,29 @@ class NfcDocumentReaderWrapper {
                 switch displayMessage {
                 case .requestPresentPassport:
                     progressHandler("waitingForTag", nil, nil)
-                    return "Hold your iPhone near the document."
+                    return self.labels.text("nfc.system.present")
                 case .authenticatingWithPassport(let progress):
                     progressHandler("authenticating", nil, nil)
-                    return "Authenticating...\n\n" + self.progressIndicator(progress)
+                    return self.labels.text("nfc.status.authenticating")
+                        + "\n\n" + self.progressIndicator(progress)
                 case .readingDataGroupProgress(let dg, let progress):
                     let dgNumber = self.dataGroupIdToNumber(dg)
                     let dgName = self.dataGroupName(dgNumber)
                     progressHandler("readingDataGroup", dgNumber, dgName)
-                    return "Reading \(dgName)...\n\n" + self.progressIndicator(progress)
+                    return self.labels.text("nfc.status.reading", ["dataGroup": dgName])
+                        + "\n\n" + self.progressIndicator(progress)
                 case .successfulRead:
                     progressHandler("success", nil, nil)
-                    return "Document read successfully."
+                    return self.labels.text("nfc.success.description")
                 case .error(let error):
-                    return "Error: \(error.localizedDescription)"
+                    return self.labels.text("nfc.system.error",
+                                            ["detail": error.localizedDescription])
                 }
             },
             completed: { [weak self] (passport, error) in
                 guard let self = self, !self.isCancelled else {
-                    completionHandler(nil, "NFC reading cancelled")
+                    completionHandler(nil, self?.labels.text("error.NFC_CANCELLED")
+                                      ?? "error.NFC_CANCELLED")
                     return
                 }
 
@@ -126,16 +138,16 @@ class NfcDocumentReaderWrapper {
                     switch error {
                     case .TagNotValid:
                         errorCode = "TAG_NOT_SUPPORTED"
-                        userMessage = "This document's chip could not be detected. Please try repositioning it."
+                        userMessage = self.labels.text("error.TAG_NOT_SUPPORTED")
                     case .ConnectionError:
                         errorCode = "TAG_LOST"
-                        userMessage = "Connection lost. Please hold the document steady on your phone and try again."
+                        userMessage = self.labels.text("error.TAG_LOST")
                     case .InvalidMRZKey:
                         errorCode = "AUTH_FAILED"
-                        userMessage = "Unable to read this document. Please ensure the document details are correct and try again."
+                        userMessage = self.labels.text("error.AUTH_FAILED")
                     default:
                         errorCode = "UNKNOWN"
-                        userMessage = "An unexpected error occurred. Please try again."
+                        userMessage = self.labels.text("error.UNKNOWN")
                     }
 
                     // Log diagnostics to Supabase (fire-and-forget)
@@ -157,12 +169,12 @@ class NfcDocumentReaderWrapper {
                     DiagnosticsLogger.logError(
                         errorCode: "UNKNOWN",
                         technicalError: "No passport and no error returned from reader",
-                        userMessage: "An unexpected error occurred. Please try again.",
+                        userMessage: self.labels.text("error.UNKNOWN"),
                         documentNumber: documentNumber,
                         dateOfBirth: dateOfBirth,
                         dateOfExpiry: dateOfExpiry
                     )
-                    completionHandler(nil, "An unexpected error occurred. Please try again.")
+                    completionHandler(nil, self.labels.text("error.UNKNOWN"))
                 }
 
                 self.passportReader = nil

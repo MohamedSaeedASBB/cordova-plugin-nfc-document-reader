@@ -354,7 +354,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         // Nothing collected at all: this is a failure, not a partial result.
         guard var payload = payload, payload["mrz"] != nil else {
             let result = CDVPluginResult(status: CDVCommandStatus_ERROR,
-                                         messageAs: errorMessage ?? "Capture cancelled.")
+                                         messageAs: errorMessage ?? labels.text("error.CAPTURE_CANCELLED"))
             commandDelegate.send(result, callbackId: callbackId)
             return
         }
@@ -572,6 +572,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             reader.trustStoreResource = passiveAuth["trustStoreAsset"] as? String
         }
         reader.includeRawDataGroups = pendingIncludeRawDataGroups
+        reader.labels = labels
         self.documentReader = reader
 
         reader.readDocument(
@@ -674,7 +675,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                                               captureIssue: nil)
                     } else {
                         self.dismissNfcBottomSheet()
-                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Unknown error")
+                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.UNKNOWN"))
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
                     }
 
@@ -696,7 +697,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         pendingCombinedOptions = nil
 
         if let callbackId = nfcCallbackId {
-            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC reading cancelled")
+            let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.NFC_CANCELLED"))
             commandDelegate.send(result, callbackId: callbackId)
             nfcCallbackId = nil
         }
@@ -719,7 +720,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             self?.dismissNfcBottomSheet()
 
             if let callbackId = self?.nfcCallbackId {
-                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "NFC reading cancelled")
+                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.NFC_CANCELLED"))
                 self?.commandDelegate.send(result, callbackId: callbackId)
                 self?.nfcCallbackId = nil
                 self?.documentReader = nil
@@ -825,7 +826,7 @@ extension NfcDocumentReaderPlugin: MrzCameraViewControllerDelegate {
         activeFlow = nil
 
         guard let callbackId = mrzScanCallbackId else { return }
-        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "MRZ scan cancelled")
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.MRZ_CANCELLED"))
         commandDelegate.send(pluginResult, callbackId: callbackId)
         mrzScanCallbackId = nil
     }
@@ -882,7 +883,7 @@ extension NfcDocumentReaderPlugin: DocumentCaptureViewControllerDelegate {
 
         guard let callbackId = callbackId else { return }
         let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR,
-                                           messageAs: "Document capture was cancelled.")
+                                           messageAs: labels.text("error.CAPTURE_CANCELLED"))
         commandDelegate.send(pluginResult, callbackId: callbackId)
     }
 

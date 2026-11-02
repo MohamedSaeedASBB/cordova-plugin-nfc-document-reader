@@ -146,9 +146,10 @@ class DocumentCaptureViewController: UIViewController {
         guard stepIndex < steps.count else { return }
         let step = steps[stepIndex]
         hintLabel.text = step.hint
-        stepLabel.text = steps.count > 1
-            ? "Step \(stepIndex + 1) of \(steps.count) — \(step.label)"
-            : step.label
+        stepLabel.text = labels.text(steps.count > 1 ? "capture.step" : "capture.stepSingle",
+                                     ["index": String(stepIndex + 1),
+                                      "total": String(steps.count),
+                                      "label": step.label])
         showCamera()
     }
 
@@ -178,10 +179,8 @@ class DocumentCaptureViewController: UIViewController {
         } else if confirmed {
             hintLabel.text = labels.text("capture.hint.reviewConfirmed")
         } else {
-            hintLabel.text = requireDocument
-                ? "This does not look like the document. Please retake it."
-                : "We could not recognise the document in this photo. Retake it, or use it "
-                  + "anyway if it is correct."
+            hintLabel.text = labels.text(requireDocument
+                ? "capture.hint.rejected" : "capture.hint.unrecognised")
         }
         // In strict mode a shot that failed cannot be kept; the only way on is another attempt.
         useButton.isHidden = !confirmed && requireDocument
@@ -279,6 +278,8 @@ class DocumentCaptureViewController: UIViewController {
 
         reviewImageView.translatesAutoresizingMaskIntoConstraints = false
         reviewImageView.contentMode = .scaleAspectFit
+        reviewImageView.isAccessibilityElement = true
+        reviewImageView.accessibilityLabel = labels.text("capture.a11y.photo")
         reviewImageView.backgroundColor = .black
         reviewImageView.isHidden = true
         view.addSubview(reviewImageView)
@@ -291,11 +292,12 @@ class DocumentCaptureViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.textColor = .white
         titleLabel.font = .boldSystemFont(ofSize: 18)
-        titleLabel.text = title ?? "Capture document"
+        titleLabel.text = title ?? labels.text("capture.title.document")
         topBar.addSubview(titleLabel)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("✕", for: .normal)
+        closeButton.accessibilityLabel = labels.text("capture.button.close")
         closeButton.setTitleColor(.white, for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 22)
         closeButton.addTarget(self, action: #selector(cancel), for: .touchUpInside)
@@ -325,21 +327,21 @@ class DocumentCaptureViewController: UIViewController {
         hintLabel.numberOfLines = 0
         bottomPanel.addSubview(hintLabel)
 
-        style(captureButton, title: "Capture", filled: true)
+        style(captureButton, title: labels.text("capture.button.capture"), filled: true)
         captureButton.addTarget(self, action: #selector(captureTapped), for: .touchUpInside)
         bottomPanel.addSubview(captureButton)
 
-        style(retakeButton, title: "Retake", filled: false)
+        style(retakeButton, title: labels.text("capture.button.retake"), filled: false)
         retakeButton.addTarget(self, action: #selector(retakeTapped), for: .touchUpInside)
         retakeButton.isHidden = true
         bottomPanel.addSubview(retakeButton)
 
-        style(useButton, title: "Use photo", filled: true)
+        style(useButton, title: labels.text("capture.button.use"), filled: true)
         useButton.addTarget(self, action: #selector(useTapped), for: .touchUpInside)
         useButton.isHidden = true
         bottomPanel.addSubview(useButton)
 
-        style(cancelButton, title: "Cancel", filled: false)
+        style(cancelButton, title: labels.text("capture.button.cancel"), filled: false)
         cancelButton.addTarget(self, action: #selector(cancel), for: .touchUpInside)
         bottomPanel.addSubview(cancelButton)
 
