@@ -133,17 +133,17 @@ class DocumentCaptureOptions {
     }
 
     /** The two sides of an ID card, or the single data page of a passport. */
-    static JSONArray stepsForDocumentType(String documentType) {
+    static JSONArray stepsForDocumentType(String documentType, Labels labels) {
         JSONArray steps = new JSONArray();
         try {
             if ("passport".equalsIgnoreCase(documentType)) {
-                steps.put(step("front", "Passport photo page",
-                        "Open the passport at the photo page and fill the frame"));
+                steps.put(step("front", labels.text("capture.step.passport.label"),
+                        labels.text("capture.step.passport.hint")));
             } else {
-                steps.put(step("front", "Front of the card",
-                        "Place the front of the card flat and fill the frame"));
-                steps.put(step("back", "Back of the card",
-                        "Now turn the card over and photograph the back"));
+                steps.put(step("front", labels.text("capture.step.front.label"),
+                        labels.text("capture.step.front.hint")));
+                steps.put(step("back", labels.text("capture.step.back.label"),
+                        labels.text("capture.step.back.hint")));
             }
         } catch (Exception ignored) {}
         return steps;

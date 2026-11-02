@@ -17,6 +17,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+
+import java.util.HashMap;
+import java.util.Map;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -58,6 +61,8 @@ public class MrzCameraActivity extends AppCompatActivity {
     private ExecutorService cameraExecutor;
     private TextRecognizer textRecognizer;
     private MrzOcrProcessor mrzProcessor;
+    /** Supplied by the plugin through the Intent; the bundle always arrives complete. */
+    private Labels labels = Labels.empty();
     private volatile boolean mrzDetected = false;
 
     private MrzOcrProcessor.MrzParseResult detectedResult;
@@ -104,6 +109,13 @@ public class MrzCameraActivity extends AppCompatActivity {
                 findViewById(getResId("topBar")),
                 findViewById(getResId("bottomPanel")));
 
+        // Labels first: the layout ships English so it renders in the editor, and every string
+        // in it is replaced here before the screen is shown.
+        labels = Labels.fromJson(getIntent().getStringExtra("labels"),
+                                 getIntent().getStringExtra("direction"));
+        labels.applyDirection(findViewById(android.R.id.content));
+        applyLabels();
+
         cameraExecutor = Executors.newSingleThreadExecutor();
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         mrzProcessor = new MrzOcrProcessor();
@@ -117,9 +129,9 @@ public class MrzCameraActivity extends AppCompatActivity {
         // Set initial status based on document type
         String documentType = getIntent().getStringExtra("documentType");
         if ("passport".equals(documentType)) {
-            statusText.setText("Point camera at the MRZ lines on your passport data page");
+            statusText.setText(labels.text("mrz.hint.passport"));
         } else {
-            statusText.setText("Point camera at the MRZ lines on the back of your ID card");
+            statusText.setText(labels.text("mrz.hint.id"));
         }
 
         // Close button (top-right X)
@@ -166,6 +178,34 @@ public class MrzCameraActivity extends AppCompatActivity {
     }
 
     // ==================== MRZ Guide Frame ====================
+
+    /**
+     * Replaces every string the layout ships with the one the application supplied.
+     *
+     * The layout keeps its English so it still renders in Android Studio's preview; nothing it
+     * contains reaches a customer without passing through here first.
+     */
+    private void applyLabels() {
+        setLabel("titleText", "mrz.title");
+        setLabel("confirmButton", "mrz.button.confirm");
+        setLabel("rescanButton", "mrz.button.rescan");
+        setLabel("cancelButton", "mrz.button.cancel");
+    }
+
+    private void setLabel(String viewName, String key) {
+        int id = getResId(viewName);
+        if (id == 0) return;
+        android.view.View view = findViewById(id);
+        if (view instanceof android.widget.TextView) {
+            ((android.widget.TextView) view).setText(labels.text(key));
+        }
+    }
+
+    private String detectingText(int lineCount) {
+        Map<String, String> values = new HashMap<>();
+        values.put("lines", String.valueOf(lineCount));
+        return labels.text("mrz.status.detecting", values);
+    }
 
     private void setGuideFrameBorder(int color) {
         GradientDrawable border = new GradientDrawable();
@@ -262,7 +302,7 @@ public class MrzCameraActivity extends AppCompatActivity {
                     runOnUiThread(() -> showResult(result));
                 } else if (!result.rawLines.isEmpty()) {
                     runOnUiThread(() ->
-                        statusText.setText("Detecting... (" + result.rawLines.size() + " lines found)"));
+                        statusText.setText(detectingText(result.rawLines.size())));
                 }
             })
             .addOnFailureListener(e -> Log.e(TAG, "OCR error: " + e.getMessage()))
@@ -297,7 +337,9 @@ public class MrzCameraActivity extends AppCompatActivity {
         setGuideFrameBorder(Color.parseColor("#4CAF50"));
 
         // Update status
-        statusText.setText("MRZ detected (" + result.format + ")");
+        Map<String, String> detected = new HashMap<>();
+        detected.put("format", result.format);
+        statusText.setText(labels.text("mrz.status.detected", detected));
 
         // Show result card
         resultContainer.setVisibility(View.VISIBLE);
@@ -324,9 +366,9 @@ public class MrzCameraActivity extends AppCompatActivity {
         // Reset status
         String documentType = getIntent().getStringExtra("documentType");
         if ("passport".equals(documentType)) {
-            statusText.setText("Point camera at the MRZ lines on your passport data page");
+            statusText.setText(labels.text("mrz.hint.passport"));
         } else {
-            statusText.setText("Point camera at the MRZ lines on the back of your ID card");
+            statusText.setText(labels.text("mrz.hint.id"));
         }
 
         // Hide result card and buttons

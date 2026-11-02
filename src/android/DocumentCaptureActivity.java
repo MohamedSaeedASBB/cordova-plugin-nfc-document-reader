@@ -97,6 +97,8 @@ public class DocumentCaptureActivity extends AppCompatActivity {
     private TextRecognizer textRecognizer;
 
     private DocumentCaptureOptions options;
+    /** Supplied by the plugin through the Intent; the bundle always arrives complete. */
+    private Labels labels = Labels.empty();
     private MrzOcrProcessor mrzProcessor;
     private final List<JSONObject> captured = new ArrayList<>();
     private int stepIndex = 0;
@@ -121,6 +123,13 @@ public class DocumentCaptureActivity extends AppCompatActivity {
         closeButton = findViewById(getResId("closeButton"));
         reviewButtons = findViewById(getResId("reviewButtons"));
         captureGuideFrame = findViewById(getResId("captureGuideFrame"));
+
+        labels = Labels.fromJson(getIntent().getStringExtra("labels"),
+                                 getIntent().getStringExtra("direction"));
+        applyLabels("captureButton", "capture.button.capture",
+                    "useButton", "capture.button.use",
+                    "retakeButton", "capture.button.retake",
+                    "cancelButton", "capture.button.cancel");
 
         SystemBarInsets.apply(findViewById(android.R.id.content),
                 findViewById(getResId("topBar")), findViewById(getResId("bottomPanel")));
@@ -225,7 +234,7 @@ public class DocumentCaptureActivity extends AppCompatActivity {
                 // rather than the compressed copy, so the verdict is in front of the person while
                 // they can still retake it.
                 if (options.verifyDocument) {
-                    runOnUiThread(() -> hintText.setText("Checking the photo..."));
+                    runOnUiThread(() -> hintText.setText(labels.text("capture.hint.checking")));
                     pendingCheck = DocumentEvidenceCheck.inspect(
                             shot, options.expectedIdentifiers, textRecognizer, mrzProcessor);
                 } else {
@@ -306,9 +315,9 @@ public class DocumentCaptureActivity extends AppCompatActivity {
 
         boolean confirmed = pendingCheck == null || pendingCheck.isConfirmed();
         if (pendingCheck == null) {
-            hintText.setText("Check the photo is sharp and the whole document is visible");
+            hintText.setText(labels.text("capture.hint.review"));
         } else if (confirmed) {
-            hintText.setText("Document recognised — check it is sharp and complete");
+            hintText.setText(labels.text("capture.hint.reviewConfirmed"));
         } else {
             hintText.setText(options.requireDocument
                     ? "This does not look like the document. Please retake it."
@@ -479,5 +488,23 @@ public class DocumentCaptureActivity extends AppCompatActivity {
 
     private int getResId(String name) {
         return getResources().getIdentifier(name, "id", getPackageName());
+    }
+
+    /**
+     * Replaces every string the layout ships with the one the application supplied.
+     *
+     * The layout keeps its English so it still renders in Android Studio's preview; nothing it
+     * contains reaches a customer without passing through here first.
+     */
+    private void applyLabels(String... viewAndKeyPairs) {
+        labels.applyDirection(findViewById(android.R.id.content));
+        for (int i = 0; i + 1 < viewAndKeyPairs.length; i += 2) {
+            int id = getResources().getIdentifier(viewAndKeyPairs[i], "id", getPackageName());
+            if (id == 0) continue;
+            android.view.View view = findViewById(id);
+            if (view instanceof android.widget.TextView) {
+                ((android.widget.TextView) view).setText(labels.text(viewAndKeyPairs[i + 1]));
+            }
+        }
     }
 }

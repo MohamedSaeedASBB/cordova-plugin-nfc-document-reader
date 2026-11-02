@@ -27,6 +27,214 @@ var SERVICE_NAME = 'NfcDocumentReader';
  * The detailed native blocks are left untouched alongside it, so nothing is lost.
  */
 
+/**
+ * ---------------------------------------------------------------------------------------------
+ * Labels
+ * ---------------------------------------------------------------------------------------------
+ * Every string the plugin's screens can show, in one place, overridable by the host app.
+ *
+ * WHY THE DEFAULTS LIVE HERE AND NOT IN THE NATIVE CODE
+ * There is one copy of this text and both platforms are handed it. Two hardcoded English copies
+ * would drift, and this project has watched that happen repeatedly in smaller ways — "notPerformed"
+ * against "notDone", "I" against "ID", a name split one way on Android and another on iOS. Drifting
+ * in a language nobody on the team reads is worse: nothing looks wrong until a customer says so.
+ *
+ * So the native side holds no defaults at all. `resolveLabels` fills every key before the call
+ * crosses the bridge, and a screen that renders an empty label is a missing key here, not a
+ * platform difference.
+ *
+ * WHY NOT ANDROID values-ar/ AND iOS .lproj
+ * Native resources follow the handset's locale. An application with its own language switch — which
+ * this one has — would show Arabic prompts to a customer whose phone is in English, and English to
+ * one who chose Arabic in the app. The copy also belongs to the bank: identity-verification wording
+ * is reviewed, and translations compiled into a plugin are translations nobody approved.
+ *
+ * PLACEHOLDERS
+ * `{name}` is substituted by the native layer. They are listed per key below; a translation may
+ * reorder them but must not invent or drop one.
+ */
+var DEFAULT_LABELS = {
+    // ---- NFC bottom sheet ----
+    "nfc.ready.title":              "Ready to Scan",
+    "nfc.ready.description":        "Hold your document against the back of your phone and keep it still.",
+    "nfc.status.waiting":           "Waiting for document...",
+    "nfc.status.connecting":        "Connecting...",
+    "nfc.status.authenticating":    "Authenticating...",
+    "nfc.status.reading":           "Reading {dataGroup}...",    // {dataGroup}
+    "nfc.reading.title":            "Reading Document",
+    "nfc.reading.description":      "Keep the document still against your phone.\nDo not move it until reading is complete.",
+    "nfc.success.title":            "Success",
+    "nfc.success.description":      "Document data read successfully.",
+    "nfc.success.status":           "Complete",
+    "nfc.error.title":              "Error",
+    "nfc.error.status":             "Failed",
+    "nfc.button.cancel":            "Cancel",
+    "nfc.button.close":             "Close",
+
+    // ---- MRZ scanner ----
+    "mrz.title":                    "Scan MRZ",
+    "mrz.hint":                     "Point camera at the MRZ lines",
+    "mrz.hint.id":                  "Point camera at the MRZ lines on the back of your ID card",
+    "mrz.hint.passport":            "Point camera at the MRZ lines on your passport data page",
+    "mrz.status.detecting":         "Detecting... ({lines} lines found)",   // {lines}
+    "mrz.status.scanning":          "Scanning...",
+    "mrz.status.detected":          "MRZ Detected ({format})",   // {format}
+    "mrz.status.confirming":        "Hold steady — confirming ({seen}/{required})",  // {seen} {required}
+    "mrz.status.cameraUnavailable": "Camera not available",
+    "mrz.status.permissionRequired":"Camera permission is required to scan MRZ",
+    "mrz.result.documentNumber":    "Document",
+    "mrz.result.dateOfBirth":       "Date of Birth",
+    "mrz.result.dateOfExpiry":      "Date of Expiry",
+    "mrz.button.confirm":           "Confirm",
+    "mrz.button.rescan":            "Re-scan",
+    "mrz.button.cancel":            "Cancel",
+
+    // ---- Document capture ----
+    "capture.title.id":             "Capture ID card",
+    "capture.title.passport":       "Capture passport",
+    "capture.title.proofOfAddress": "Proof of address",
+    "capture.step":                 "STEP {index} OF {total}",   // {index} {total}
+    "capture.step.front.label":     "Front of the card",
+    "capture.step.front.hint":      "Place the front of the card flat and fill the frame",
+    "capture.step.back.label":      "Back of the card",
+    "capture.step.back.hint":       "Now turn the card over and photograph the back",
+    "capture.step.passport.label":  "Passport photo page",
+    "capture.step.passport.hint":   "Open the passport at the photo page and fill the frame",
+    "capture.step.document.label":  "Proof of address",
+    "capture.step.document.hint":   "Photograph the whole page, including the name and address",
+    "capture.hint.review":          "Check the photo is sharp and the whole document is visible",
+    "capture.hint.reviewConfirmed": "Document recognised — check it is sharp and complete",
+    "capture.hint.checking":        "Checking the photo...",
+    "capture.hint.saveFailed":      "That photo could not be saved. Please retake it.",
+    "capture.hint.captureFailed":   "The photo could not be taken. Please try again.",
+    "capture.permissionRequired":   "Camera permission is required to photograph the document.",
+    "capture.button.capture":       "Capture",
+    "capture.button.use":           "Use photo",
+    "capture.button.retake":        "Retake",
+    "capture.button.cancel":        "Cancel",
+
+    // ---- Liveness ----
+    "liveness.title":               "Liveness Check",
+    "liveness.step":                "STEP {index} OF {total}",   // {index} {total}
+    "liveness.findFace":            "Position your face inside the oval",
+    "liveness.center":              "Centre your face in the oval",
+    "liveness.tooFar":              "Move a little closer",
+    "liveness.tooClose":            "Move a little further away",
+    "liveness.multipleFaces":       "Only one person should be in frame",
+    "liveness.blink":               "Blink slowly",
+    "liveness.smile":               "Smile",
+    "liveness.turnLeft":            "Slowly turn your head to your left",
+    "liveness.turnRight":           "Slowly turn your head to your right",
+    "liveness.turnLeftSmile":       "Turn your head to your left and smile",
+    "liveness.turnRightSmile":      "Turn your head to your right and smile",
+    "liveness.turnLeftBlink":       "Turn your head to your left, then blink",
+    "liveness.turnRightBlink":      "Turn your head to your right, then blink",
+    "liveness.hold":                "Hold still and look at the camera",
+    "liveness.success":             "Done",
+    "liveness.failed":              "Liveness check failed",
+    "liveness.hint":                "Hold your phone at eye level in even lighting",
+    "liveness.button.cancel":       "Cancel",
+
+    // ---- Messages delivered to the error callback ----
+    // Keyed by the code the native layer reports, so the mapping lives here rather than being
+    // translated in two places. A code with no entry is passed through as-is.
+    "error.NO_FACE_TIMEOUT":        "We could not see your face. Please try again in better lighting.",
+    "error.CHALLENGE_TIMEOUT":      "The on-screen instruction was not completed in time. Please try again.",
+    "error.MULTIPLE_FACES":         "More than one face was visible. Please make sure you are alone in frame.",
+    "error.FACE_CHANGED":           "The face in front of the camera changed during the check. Please try again.",
+    "error.OVERALL_TIMEOUT":        "The liveness check took too long. Please try again.",
+    "error.CAPTURE_FAILED":         "We could not capture a clear photo. Please try again in better lighting.",
+    "error.CAMERA_UNAVAILABLE":     "The camera could not be started.",
+    "error.CAMERA_PERMISSION":      "Camera permission is required.",
+    "error.MRZ_CANCELLED":          "MRZ scan cancelled",
+    "error.CAPTURE_CANCELLED":      "Document capture was cancelled.",
+    "error.NFC_CANCELLED":          "NFC reading cancelled",
+    "error.NFC_UNAVAILABLE":        "NFC is not available on this device.",
+    "error.NFC_DISABLED":           "NFC is turned off. Please enable NFC in your device settings.",
+    "error.READ_FAILED":            "Unable to read document data. Please keep the document still and try again.",
+    "error.AUTH_FAILED":            "Unable to read this document. Please ensure the document details are correct and try again.",
+    "error.UNKNOWN":                "An unexpected error occurred. Please try again."
+};
+
+/** Overrides set by the host app, applied to every subsequent call. */
+var sessionLabels = {};
+/** "ltr" or "rtl". Explicit rather than inferred: see setDirection. */
+var sessionDirection = "ltr";
+
+/**
+ * Replaces one or more labels for every subsequent call.
+ *
+ * Call it once at startup and again whenever the application's language changes. Keys not listed
+ * keep their current value, so a partial bundle is fine — and a partially translated one shows the
+ * untranslated keys in English rather than blank.
+ *
+ * An unknown key is reported rather than ignored. The previous `prompts` option dropped them
+ * silently, which turns a typo into a label that simply never changes and no sign of why.
+ */
+function setLabels(overrides) {
+    if (!overrides || typeof overrides !== "object") return;
+    var unknown = [];
+    for (var key in overrides) {
+        if (!Object.prototype.hasOwnProperty.call(overrides, key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(DEFAULT_LABELS, key)) {
+            unknown.push(key);
+            continue;
+        }
+        if (typeof overrides[key] === "string") sessionLabels[key] = overrides[key];
+    }
+    if (unknown.length && typeof console !== "undefined" && console.warn) {
+        console.warn("[NfcDocumentReader] Unknown label key(s) ignored: " + unknown.join(", ")
+            + ". See NfcDocumentReader.labelKeys().");
+    }
+}
+
+/**
+ * Lays the plugin's screens out left-to-right or right-to-left.
+ *
+ * Separate from the labels on purpose. Arabic text in a left-to-right layout is still wrong — the
+ * back arrow, the step counter and the buttons all sit on the side the reader finishes at, not the
+ * side they start from. Translating without this produces a screen that reads correctly and
+ * behaves backwards.
+ *
+ * Explicit rather than inferred from the characters in the bundle: a guess about which way a
+ * customer's screen should flow is not the plugin's to make.
+ */
+function setDirection(direction) {
+    sessionDirection = direction === "rtl" ? "rtl" : "ltr";
+}
+
+/** Every label, with session overrides and then this call's overrides applied. */
+function resolveLabels(perCall) {
+    var resolved = {};
+    for (var key in DEFAULT_LABELS) {
+        if (Object.prototype.hasOwnProperty.call(DEFAULT_LABELS, key)) {
+            resolved[key] = sessionLabels[key] !== undefined ? sessionLabels[key] : DEFAULT_LABELS[key];
+        }
+    }
+    if (perCall && typeof perCall === "object") {
+        for (var k in perCall) {
+            if (Object.prototype.hasOwnProperty.call(resolved, k)
+                && typeof perCall[k] === "string") {
+                resolved[k] = perCall[k];
+            }
+        }
+    }
+    return resolved;
+}
+
+/** Adds the resolved labels and direction to a call's options, without mutating the caller's. */
+function withLabels(options) {
+    var out = {};
+    var source = options || {};
+    for (var k in source) {
+        if (Object.prototype.hasOwnProperty.call(source, k)) out[k] = source[k];
+    }
+    out.labels = resolveLabels(source.labels);
+    out.direction = source.direction === "rtl" || source.direction === "ltr"
+        ? source.direction : sessionDirection;
+    return out;
+}
+
 /** code -> [severity, plain-language message]. Severity: "blocking" | "warning". */
 var ISSUE_TEXT = {
     // Passive authentication
@@ -409,7 +617,7 @@ var NfcDocumentReader = {
      *                 reduces heat on long scans; lowering it makes detection feel more immediate.
      */
     scanMRZ: function(success, error, options) {
-        exec(wrap(success, 'scanMRZ'), error, SERVICE_NAME, 'scanMRZ', [options || {}]);
+        exec(wrap(success, 'scanMRZ'), error, SERVICE_NAME, 'scanMRZ', [withLabels(options)]);
     },
 
     /**
@@ -478,7 +686,7 @@ var NfcDocumentReader = {
      *   turnLeftSmile, turnRightSmile, turnLeftBlink, turnRightBlink, hold, success, failed, hint.
      */
     checkLiveness: function(success, error, options) {
-        exec(wrap(success, 'checkLiveness'), error, SERVICE_NAME, 'checkLiveness', [options || {}]);
+        exec(wrap(success, 'checkLiveness'), error, SERVICE_NAME, 'checkLiveness', [withLabels(options)]);
     },
 
     /**
@@ -646,7 +854,7 @@ var NfcDocumentReader = {
      * @param {number} [options.faceMatch.embeddingSize=192] - Model output vector length
      */
     readNFC: function(success, error, mrzData, options) {
-        exec(wrap(success, 'readNFC'), error, SERVICE_NAME, 'readNFC', [mrzData, options || {}]);
+        exec(wrap(success, 'readNFC'), error, SERVICE_NAME, 'readNFC', [mrzData, withLabels(options)]);
     },
 
     /**
@@ -655,6 +863,24 @@ var NfcDocumentReader = {
      * @param {Object} result - a readNFC final result
      * @returns {Object} the verification block
      */
+    /**
+     * Replaces plugin labels for every subsequent call. Partial bundles are fine.
+     * See docs/labels/ for en, ar and fr starting points.
+     */
+    setLabels: setLabels,
+
+    /**
+     * "ltr" or "rtl". Set alongside an Arabic bundle — translating without it gives a screen that
+     * reads correctly and behaves backwards.
+     */
+    setDirection: setDirection,
+
+    /** Every label key the plugin understands, for checking a bundle against. */
+    labelKeys: function() { return Object.keys(DEFAULT_LABELS); },
+
+    /** The labels as they would be sent right now, defaults plus session overrides. */
+    labels: function() { return resolveLabels(null); },
+
     summarise: summarise,
 
     /**
@@ -714,7 +940,7 @@ var NfcDocumentReader = {
      * there the picture is the data.
      */
     captureDocument: function(success, error, options) {
-        exec(wrap(success, 'captureDocument'), error, SERVICE_NAME, 'captureDocument', [options || {}]);
+        exec(wrap(success, 'captureDocument'), error, SERVICE_NAME, 'captureDocument', [withLabels(options)]);
     },
 
     /**
@@ -754,7 +980,7 @@ var NfcDocumentReader = {
      */
     captureAndReadNFC: function(success, error, options) {
         exec(wrap(success, 'captureAndReadNFC'), error, SERVICE_NAME,
-             'captureAndReadNFC', [options || {}]);
+             'captureAndReadNFC', [withLabels(options)]);
     },
 
     /**
@@ -796,7 +1022,7 @@ var NfcDocumentReader = {
      */
     captureDocumentAndLiveness: function(success, error, options) {
         exec(wrap(success, 'captureDocumentAndLiveness'), error, SERVICE_NAME,
-             'captureDocumentAndLiveness', [options || {}]);
+             'captureDocumentAndLiveness', [withLabels(options)]);
     },
 
     /**
@@ -839,7 +1065,7 @@ var NfcDocumentReader = {
      * for dense pages; lower them if payload size matters more than legibility.
      */
     captureProofOfAddress: function(success, error, options) {
-        exec(wrap(success, 'captureProofOfAddress'), error, SERVICE_NAME, 'captureProofOfAddress', [options || {}]);
+        exec(wrap(success, 'captureProofOfAddress'), error, SERVICE_NAME, 'captureProofOfAddress', [withLabels(options)]);
     },
 
     /**

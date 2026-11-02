@@ -30,6 +30,9 @@ class DocumentCaptureViewController: UIViewController {
     weak var delegate: DocumentCaptureViewControllerDelegate?
 
     var captureType: String = "document"
+
+    /// Supplied by the plugin before presentation; the bundle always arrives complete.
+    var labels = Labels(nil, direction: nil)
     var documentType: String?
     var steps: [DocumentCaptureStep] = []
     var runOcr = false
@@ -63,21 +66,25 @@ class DocumentCaptureViewController: UIViewController {
 
     /// The two sides of an ID card, or the single data page of a passport. Mirrors
     /// DocumentCaptureOptions.stepsForDocumentType.
-    static func steps(forDocumentType documentType: String) -> [DocumentCaptureStep] {
+    static func steps(forDocumentType documentType: String, labels: Labels) -> [DocumentCaptureStep] {
         if documentType.lowercased() == "passport" {
-            return [DocumentCaptureStep(key: "front", label: "Passport photo page",
-                                        hint: "Open the passport at the photo page and fill the frame")]
+            return [DocumentCaptureStep(key: "front",
+                                        label: labels.text("capture.step.passport.label"),
+                                        hint: labels.text("capture.step.passport.hint"))]
         }
         return [
-            DocumentCaptureStep(key: "front", label: "Front of the card",
-                                hint: "Place the front of the card flat and fill the frame"),
-            DocumentCaptureStep(key: "back", label: "Back of the card",
-                                hint: "Now turn the card over and photograph the back")
+            DocumentCaptureStep(key: "front",
+                                label: labels.text("capture.step.front.label"),
+                                hint: labels.text("capture.step.front.hint")),
+            DocumentCaptureStep(key: "back",
+                                label: labels.text("capture.step.back.label"),
+                                hint: labels.text("capture.step.back.hint"))
         ]
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        labels.applyDirection(to: view)
         view.backgroundColor = .black
         setupUI()
         showStep()
@@ -167,9 +174,9 @@ class DocumentCaptureViewController: UIViewController {
 
         let confirmed = pendingCheck?.isConfirmed ?? true
         if pendingCheck == nil {
-            hintLabel.text = "Check the photo is sharp and the whole document is visible"
+            hintLabel.text = labels.text("capture.hint.review")
         } else if confirmed {
-            hintLabel.text = "Document recognised — check it is sharp and complete"
+            hintLabel.text = labels.text("capture.hint.reviewConfirmed")
         } else {
             hintLabel.text = requireDocument
                 ? "This does not look like the document. Please retake it."
@@ -209,7 +216,7 @@ class DocumentCaptureViewController: UIViewController {
             guard let compressed = ImageCompressor.compress(image, faceBox: nil, options: options) else {
                 DispatchQueue.main.async {
                     self.useButton.isEnabled = true
-                    self.hintLabel.text = "That photo could not be saved. Please retake it."
+                    self.hintLabel.text = self.labels.text("capture.hint.saveFailed")
                     self.showCamera()
                 }
                 return
@@ -422,7 +429,7 @@ extension DocumentCaptureViewController: AVCapturePhotoCaptureDelegate {
               let image = UIImage(data: data) else {
             DispatchQueue.main.async {
                 self.captureButton.isEnabled = true
-                self.hintLabel.text = "The photo could not be taken. Please try again."
+                self.hintLabel.text = self.labels.text("capture.hint.captureFailed")
             }
             return
         }
@@ -430,7 +437,7 @@ extension DocumentCaptureViewController: AVCapturePhotoCaptureDelegate {
         // Checked before the review screen appears, and on the full-resolution frame rather than
         // the compressed copy, so the verdict is in front of the person while they can still
         // retake it.
-        DispatchQueue.main.async { self.hintLabel.text = "Checking the photo..." }
+        DispatchQueue.main.async { self.hintLabel.text = self.labels.text("capture.hint.checking") }
         DispatchQueue.global(qos: .userInitiated).async {
             let check = self.verifyDocument
                 ? DocumentEvidenceCheck.inspect(image, expected: self.expectedIdentifiers)

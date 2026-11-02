@@ -55,6 +55,8 @@ struct LivenessOptions {
     var videoTrimToChallenges: Bool = true
 
     var prompts: [String: String] = LivenessOptions.defaultPrompts
+    /// Which prompts the caller actually set, so the label bundle supplies the rest.
+    private var overriddenPrompts: Set<String> = []
 
     static func from(_ dict: [String: Any]) -> LivenessOptions {
         var options = LivenessOptions()
@@ -120,6 +122,7 @@ struct LivenessOptions {
         if let overrides = dict["prompts"] as? [String: String] {
             for (key, value) in overrides where options.prompts[key] != nil {
                 options.prompts[key] = value
+                options.overriddenPrompts.insert(key)
             }
         }
 
@@ -141,6 +144,13 @@ struct LivenessOptions {
 
     func prompt(_ key: String) -> String {
         return prompts[key] ?? ""
+    }
+
+    /// True only for a prompt the caller passed. Without this the defaults in this file would
+    /// shadow the label bundle for every prompt, and translating the liveness screen through
+    /// labels would appear to do nothing.
+    func promptWasOverridden(_ key: String) -> Bool {
+        return overriddenPrompts.contains(key)
     }
 
     func detectorConfig() -> LivenessDetector.Config {

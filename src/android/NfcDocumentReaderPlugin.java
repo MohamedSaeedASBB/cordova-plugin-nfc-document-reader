@@ -50,6 +50,17 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * before deciding whether it owns the result: MRZ, capture and liveness results all arrive
      * through the same three callbacks whichever flow asked for them.
      */
+    /**
+     * The text and reading direction for every screen this plugin shows.
+     *
+     * Rebuilt from each call's options, because the application can change language between calls
+     * and the next screen should follow it without the app restarting.
+     */
+    private Labels labels = Labels.empty();
+    /** The same bundle, as received, for handing to the activities through their Intent. */
+    private String labelsJson = null;
+    private String labelsDirection = null;
+
     private String activeFlow;
     private static final String FLOW_DOCUMENT_AND_LIVENESS = "documentAndLiveness";
 
@@ -190,6 +201,24 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
     // ==================== isNFCAvailable ====================
 
+    /**
+     * Reads the bundle the JS layer attached to this call. It is always complete — the defaults
+     * live there, not here — so a missing key means a key missing from NfcDocumentReader.js.
+     */
+    private void adoptLabels(JSONObject options) {
+        if (options == null) return;
+        JSONObject bundle = options.optJSONObject("labels");
+        labelsJson = bundle != null ? bundle.toString() : null;
+        labelsDirection = options.optString("direction", "ltr");
+        labels = Labels.fromJson(labelsJson, labelsDirection);
+    }
+
+    /** Carries the bundle to an activity, which rebuilds it from these two extras. */
+    private void putLabels(Intent intent) {
+        if (labelsJson != null) intent.putExtra("labels", labelsJson);
+        intent.putExtra("direction", labelsDirection != null ? labelsDirection : "ltr");
+    }
+
     private void isNFCAvailable(CallbackContext callbackContext) {
         try {
             JSONObject result = new JSONObject();
@@ -204,6 +233,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     // ==================== scanMRZ ====================
 
     private void scanMRZ(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         mrzScanCallbackContext = callbackContext;
         Activity activity = cordova.getActivity();
 
@@ -220,6 +250,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             }
         }
 
+        putLabels(intent);
+
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
@@ -230,6 +262,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * has one, so the step list is decided here rather than by the app or the camera screen.
      */
     private void captureDocument(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         JSONObject options = args.optJSONObject(0);
         if (options == null) options = new JSONObject();
 
@@ -237,7 +270,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         try {
             options.put("captureType", "document");
             options.put("documentType", documentType);
-            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType, labels));
             // No OCR here, whatever the caller asked for. The chip already carries these fields —
             // including the Arabic — covered by the issuer's signature and hash-verified, so
             // reading them off a photograph instead would substitute an unsigned, camera-dependent
@@ -252,7 +285,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             // identifiers can pass expectedIdentifiers itself.
             if (!options.has("title")) {
                 options.put("title", "passport".equalsIgnoreCase(documentType)
-                        ? "Capture passport" : "Capture ID card");
+                        ? labels.text("capture.title.passport") : labels.text("capture.title.id"));
             }
         } catch (JSONException e) {
             callbackContext.error("Invalid capture options: " + e.getMessage());
@@ -263,6 +296,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
     /** A single page of whatever the customer brought — a bill, a statement, a tenancy contract. */
     private void captureProofOfAddress(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         JSONObject options = args.optJSONObject(0);
         if (options == null) options = new JSONObject();
 
@@ -316,6 +350,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * returning it incomplete.
      */
     private void captureAndReadNFC(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         JSONObject options = args.optJSONObject(0);
         if (options == null) options = new JSONObject();
 
@@ -325,6 +360,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
         intent.putExtra("documentType", options.optString("documentType", "id"));
         applyMrzScanOptions(intent, options);
+        putLabels(intent);
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
@@ -354,8 +390,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             options.put("captureType", "document");
             options.put("documentType", captureType);
             options.put("ocr", false);          // the chip supplies these fields, signed
-            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(captureType));
-            options.put("title", isPassport ? "Capture passport" : "Capture ID card");
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(captureType, labels));
+            options.put("title", isPassport ? labels.text("capture.title.passport") : labels.text("capture.title.id"));
             options.put("expectedIdentifiers", identifiersFrom(payload));
         } catch (JSONException e) {
             // Cannot photograph, but the chip read succeeded — deliver that rather than nothing.
@@ -436,6 +472,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
      * than reaching one. verification.documentAuthentic is "unknown" in every result.
      */
     private void captureDocumentAndLiveness(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         JSONObject options = args.optJSONObject(0);
         if (options == null) options = new JSONObject();
 
@@ -456,6 +493,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         Intent intent = new Intent(cordova.getActivity(), MrzCameraActivity.class);
         intent.putExtra("documentType", options.optString("documentType", "id"));
         applyMrzScanOptions(intent, options);
+        putLabels(intent);
         cordova.startActivityForResult(this, intent, REQUEST_MRZ_SCAN);
     }
 
@@ -467,9 +505,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             options.put("captureType", "document");
             options.put("documentType", documentType);
             options.put("ocr", false);
-            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType));
+            options.put("steps", DocumentCaptureOptions.stepsForDocumentType(documentType, labels));
             options.put("title", "passport".equalsIgnoreCase(documentType)
-                    ? "Capture passport" : "Capture ID card");
+                    ? labels.text("capture.title.passport") : labels.text("capture.title.id"));
             // No chip on this path, but the MRZ scan already read the document number.
             options.put("expectedIdentifiers",
                     identifiersFrom(docLivenessPayload.optJSONObject("mrz")));
@@ -490,6 +528,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
         Object liveness = docLivenessOptions.opt("liveness");
         String livenessJson = liveness instanceof JSONObject ? liveness.toString() : "{}";
         intent.putExtra(LivenessCameraActivity.EXTRA_OPTIONS, livenessJson);
+        putLabels(intent);
         cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
     }
 
@@ -536,6 +575,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         Intent intent = new Intent(cordova.getActivity(), DocumentCaptureActivity.class);
         intent.putExtra(DocumentCaptureActivity.EXTRA_OPTIONS, options.toString());
+        putLabels(intent);
         cordova.startActivityForResult(this, intent, REQUEST_DOCUMENT_CAPTURE);
     }
 
@@ -597,6 +637,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     // ==================== checkLiveness ====================
 
     private void checkLiveness(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(0));
         livenessCallbackContext = callbackContext;
         Activity activity = cordova.getActivity();
 
@@ -611,6 +652,8 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                 Log.w(TAG, "Error parsing checkLiveness options: " + e.getMessage());
             }
         }
+
+        putLabels(intent);
 
         cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
     }
@@ -673,6 +716,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
         Intent intent = new Intent(activity, LivenessCameraActivity.class);
         intent.putExtra(LivenessCameraActivity.EXTRA_OPTIONS, pendingLivenessOptionsJson);
+        putLabels(intent);
         cordova.startActivityForResult(this, intent, REQUEST_LIVENESS);
     }
 
@@ -847,6 +891,7 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
     // ==================== readNFC ====================
 
     private void readNFC(JSONArray args, CallbackContext callbackContext) {
+        adoptLabels(args.optJSONObject(1));
         if (nfcAdapter == null) {
             callbackContext.error("NFC is not available on this device.");
             return;
@@ -984,6 +1029,16 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     Button cancelBtn = nfcDialog.findViewById(activity.getResources().getIdentifier(
                         "nfcCancelButton", "id", activity.getPackageName()));
 
+                    // The layout ships English so it renders in Android Studio's preview;
+                    // nothing it contains reaches a customer without passing through here.
+                    if (nfcTitle != null) nfcTitle.setText(labels.text("nfc.ready.title"));
+                    if (nfcDescription != null) {
+                        nfcDescription.setText(labels.text("nfc.ready.description"));
+                    }
+                    if (nfcStatus != null) nfcStatus.setText(labels.text("nfc.status.waiting"));
+                    if (cancelBtn != null) cancelBtn.setText(labels.text("nfc.button.cancel"));
+                    labels.applyDirection(nfcDialog.findViewById(android.R.id.content));
+
                     cancelBtn.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v) {
@@ -1083,10 +1138,10 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                                 // Update dialog based on state
                                 switch (state) {
                                     case "connecting":
-                                        updateNfcDialogState(null, null, "Connecting to chip...", null, true);
+                                        updateNfcDialogState(null, null, labels.text("nfc.status.connecting"), null, true);
                                         break;
                                     case "authenticating":
-                                        updateNfcDialogState(null, null, "Authenticating...", null, true);
+                                        updateNfcDialogState(null, null, labels.text("nfc.status.authenticating"), null, true);
                                         break;
                                 }
                             }
@@ -1094,8 +1149,11 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                             @Override
                             public void onReadingDataGroup(int dgNumber, String dgName) {
                                 sendDataGroupProgress(dgNumber, dgName);
+                                java.util.Map<String, String> readingValues =
+                                        new java.util.HashMap<>();
+                                readingValues.put("dataGroup", dgName);
                                 updateNfcDialogState(null, null,
-                                    "Reading " + dgName + "...", null, true);
+                                    labels.text("nfc.status.reading", readingValues), null, true);
                             }
                         });
 
@@ -1103,9 +1161,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
                     if (data != null) {
                         // Success — update dialog briefly then dismiss
                         updateNfcDialogState(
-                            "Success!",
-                            "Document read successfully.",
-                            "Complete",
+                            labels.text("nfc.success.title"),
+                            labels.text("nfc.success.description"),
+                            labels.text("nfc.success.status"),
                             "\u2705",  // ✅
                             false
                         );
@@ -1170,9 +1228,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
 
                         // Error — update dialog with friendly message then dismiss
                         updateNfcDialogState(
-                            "Error",
+                            labels.text("nfc.error.title"),
                             userMessage,
-                            "Failed",
+                            labels.text("nfc.error.status"),
                             "\u274C",  // ❌
                             false
                         );
@@ -1433,9 +1491,9 @@ public class NfcDocumentReaderPlugin extends CordovaPlugin {
             Log.d(TAG, "NFC tag discovered, starting read...");
 
             updateNfcDialogState(
-                "Reading Document",
-                "Keep the document still against your phone.\nDo not move it until reading is complete.",
-                "Connecting...",
+                labels.text("nfc.reading.title"),
+                labels.text("nfc.reading.description"),
+                labels.text("nfc.status.connecting"),
                 "\uD83D\uDD04",  // 🔄
                 true
             );

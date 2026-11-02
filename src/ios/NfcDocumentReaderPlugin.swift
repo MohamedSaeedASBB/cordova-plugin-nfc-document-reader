@@ -30,6 +30,12 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     /// The multi-step flow currently running, or nil. The MRZ, chip and capture screens all
     /// report through the same delegates whichever flow asked for them, so each handler checks
     /// this before deciding whether the result is its own to deliver.
+    /// The text and reading direction for every screen this plugin presents.
+    ///
+    /// Rebuilt from each call's options, because the application can change language between
+    /// calls and the next screen should follow it without the app restarting.
+    private var labels = Labels(nil, direction: nil)
+
     private var activeFlow: String?
     private static let flowCaptureAndReadNFC = "captureAndReadNFC"
     private static let flowDocumentAndLiveness = "documentAndLiveness"
@@ -58,6 +64,13 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         documentReader = nil
     }
 
+    /// Reads the bundle the JS layer attached to this call. It is always complete — the defaults
+    /// live there, not here — so a missing key means a key missing from NfcDocumentReader.js.
+    private func adoptLabels(from options: [String: Any]) {
+        labels = Labels(options["labels"] as? [String: Any],
+                        direction: options["direction"] as? String)
+    }
+
     // MARK: - isNFCAvailable
 
     @objc(isNFCAvailable:)
@@ -82,6 +95,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     @objc(scanMRZ:)
     func scanMRZ(command: CDVInvokedUrlCommand) {
+        adoptLabels(from: command.arguments.first as? [String: Any] ?? [:])
         activeFlow = nil
         mrzScanCallbackId = command.callbackId
         presentMrzScanner(options: command.arguments.first as? [String: Any] ?? [:])
@@ -97,6 +111,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let cameraVC = MrzCameraViewController()
+            cameraVC.labels = self.labels
             cameraVC.documentType = documentType
             if let frameIntervalMs = frameIntervalMs { cameraVC.frameIntervalMs = frameIntervalMs }
             if let requiredMatches = requiredMatches { cameraVC.requiredMatches = max(1, requiredMatches) }
@@ -110,6 +125,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     @objc(checkLiveness:)
     func checkLiveness(command: CDVInvokedUrlCommand) {
+        adoptLabels(from: command.arguments.first as? [String: Any] ?? [:])
         livenessCallbackId = command.callbackId
 
         let options = command.arguments.first as? [String: Any] ?? [:]
@@ -117,6 +133,8 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let livenessVC = LivenessCameraViewController()
+        livenessVC.labels = labels
+            livenessVC.labels = self.labels
             livenessVC.options = LivenessOptions.from(options)
             livenessVC.delegate = self
             livenessVC.modalPresentationStyle = .fullScreen
@@ -128,6 +146,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     private func presentLivenessForChipRead() {
         let livenessVC = LivenessCameraViewController()
+        livenessVC.labels = labels
         livenessVC.options = pendingLivenessOptions ?? LivenessOptions.from([:])
         livenessVC.delegate = self
         livenessVC.modalPresentationStyle = .fullScreen
@@ -214,6 +233,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     @objc(captureDocument:)
     func captureDocument(command: CDVInvokedUrlCommand) {
         let options = command.arguments.first as? [String: Any] ?? [:]
+        adoptLabels(from: options)
         let documentType = options["documentType"] as? String ?? "id"
         let isPassport = documentType.lowercased() == "passport"
 
@@ -221,8 +241,9 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             controller.captureType = "document"
             controller.documentType = documentType
             controller.title = options["title"] as? String
-                ?? (isPassport ? "Capture passport" : "Capture ID card")
-            controller.steps = DocumentCaptureViewController.steps(forDocumentType: documentType)
+                ?? self.labels.text(isPassport ? "capture.title.passport" : "capture.title.id")
+            controller.steps = DocumentCaptureViewController.steps(
+                forDocumentType: documentType, labels: self.labels)
             // No OCR: the chip carries these fields signed, so the photograph is for the record.
             controller.runOcr = false
         }
@@ -233,13 +254,16 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     @objc(captureProofOfAddress:)
     func captureProofOfAddress(command: CDVInvokedUrlCommand) {
         let options = command.arguments.first as? [String: Any] ?? [:]
+        adoptLabels(from: options)
 
         presentCapture(callbackId: command.callbackId, options: options) { controller in
             controller.captureType = "proofOfAddress"
-            controller.title = options["title"] as? String ?? "Proof of address"
+            controller.title = options["title"] as? String
+                ?? self.labels.text("capture.title.proofOfAddress")
             controller.steps = [DocumentCaptureStep(
-                key: "document", label: "Proof of address",
-                hint: "Photograph the whole page, including the name and address")]
+                key: "document",
+                label: self.labels.text("capture.step.document.label"),
+                hint: self.labels.text("capture.step.document.hint"))]
             controller.runOcr = (options["ocr"] as? Bool) ?? true
             // A bill is not an identity document; the evidence check would fail every honest one.
             controller.verifyDocument = (options["verifyDocument"] as? Bool) ?? false
@@ -264,6 +288,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     @objc(captureDocumentAndLiveness:)
     func captureDocumentAndLiveness(command: CDVInvokedUrlCommand) {
         let options = command.arguments.first as? [String: Any] ?? [:]
+        adoptLabels(from: options)
 
         docLivenessPayload = [
             "captureType": Self.flowDocumentAndLiveness,
@@ -288,8 +313,10 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         presentCapture(callbackId: docLivenessCallbackId, options: options) { controller in
             controller.captureType = "document"
             controller.documentType = documentType
-            controller.title = isPassport ? "Capture passport" : "Capture ID card"
-            controller.steps = DocumentCaptureViewController.steps(forDocumentType: documentType)
+            controller.title = self.labels.text(isPassport ? "capture.title.passport"
+                                                           : "capture.title.id")
+            controller.steps = DocumentCaptureViewController.steps(
+                forDocumentType: documentType, labels: self.labels)
             controller.runOcr = false
             controller.expectedIdentifiers = identifiers
         }
@@ -299,6 +326,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     private func docLivenessLivenessStep() {
         let livenessOptions = docLivenessOptions?["liveness"] as? [String: Any] ?? [:]
         let livenessVC = LivenessCameraViewController()
+        livenessVC.labels = labels
         livenessVC.options = LivenessOptions.from(livenessOptions)
         livenessVC.delegate = self
         livenessVC.modalPresentationStyle = .fullScreen
@@ -366,6 +394,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         }
 
         let options = command.arguments.first as? [String: Any] ?? [:]
+        adoptLabels(from: options)
         pendingCombinedOptions = options
         activeFlow = Self.flowCaptureAndReadNFC
         mrzScanCallbackId = command.callbackId
@@ -397,8 +426,10 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         presentCapture(callbackId: callbackId, options: [:]) { controller in
             controller.captureType = "document"
             controller.documentType = captureType
-            controller.title = isPassport ? "Capture passport" : "Capture ID card"
-            controller.steps = DocumentCaptureViewController.steps(forDocumentType: captureType)
+            controller.title = self.labels.text(isPassport ? "capture.title.passport"
+                                                           : "capture.title.id")
+            controller.steps = DocumentCaptureViewController.steps(
+                forDocumentType: captureType, labels: self.labels)
             controller.runOcr = false          // the chip supplies these fields, signed
             controller.expectedIdentifiers = identifiers
         }
@@ -444,6 +475,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let controller = DocumentCaptureViewController()
+            controller.labels = self.labels
             controller.imageOptions.maxDimension = options["maxImageDimension"] as? Int ?? 1200
             controller.imageOptions.maxBytes = options["maxImageBytes"] as? Int ?? 250 * 1024
             controller.imageOptions.initialQuality =
@@ -483,6 +515,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
     /// the other got here.
     private func startNfcRead(mrzData: [String: Any], readOptions: [String: Any],
                               callbackId: String?) {
+        adoptLabels(from: readOptions)
         guard let documentNumber = mrzData["documentNumber"] as? String,
               let dateOfBirth = mrzData["dateOfBirth"] as? String,
               let dateOfExpiry = mrzData["dateOfExpiry"] as? String else {
@@ -676,6 +709,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
 
     private func showNfcBottomSheet() {
         let sheet = NfcScanBottomSheet()
+        sheet.labels = labels
         sheet.modalPresentationStyle = .overFullScreen
         sheet.modalTransitionStyle = .crossDissolve
 
