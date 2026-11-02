@@ -24,6 +24,9 @@ class LivenessCameraViewController: UIViewController {
     weak var delegate: LivenessCameraViewControllerDelegate?
     var options = LivenessOptions()
 
+    /// Supplied by the plugin before presentation; the bundle always arrives complete.
+    var labels = Labels(nil, direction: nil)
+
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private let videoQueue = DispatchQueue(label: "liveness.camera.queue")
@@ -78,6 +81,7 @@ class LivenessCameraViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        labels.applyDirection(to: view)
         view.backgroundColor = .black
 
         detector = LivenessDetector(config: options.detectorConfig())
@@ -157,7 +161,7 @@ class LivenessCameraViewController: UIViewController {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topBar)
 
-        titleLabel.text = "Liveness Check"
+        titleLabel.text = labels.text("liveness.title")
         titleLabel.textColor = .white
         titleLabel.font = .boldSystemFont(ofSize: 18)
         titleLabel.textAlignment = .center
@@ -193,7 +197,7 @@ class LivenessCameraViewController: UIViewController {
         stepLabel.translatesAutoresizingMaskIntoConstraints = false
         bottomPanel.addSubview(stepLabel)
 
-        promptLabel.text = options.prompt("findFace")
+        promptLabel.text = prompt("findFace")
         promptLabel.textColor = .white
         promptLabel.font = .boldSystemFont(ofSize: 20)
         promptLabel.textAlignment = .center
@@ -201,7 +205,7 @@ class LivenessCameraViewController: UIViewController {
         promptLabel.translatesAutoresizingMaskIntoConstraints = false
         bottomPanel.addSubview(promptLabel)
 
-        hintLabel.text = options.prompt("hint")
+        hintLabel.text = prompt("hint")
         hintLabel.textColor = UIColor.white.withAlphaComponent(0.6)
         hintLabel.font = .systemFont(ofSize: 13)
         hintLabel.textAlignment = .center
@@ -209,7 +213,7 @@ class LivenessCameraViewController: UIViewController {
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         bottomPanel.addSubview(hintLabel)
 
-        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.setTitle(labels.text("liveness.button.cancel"), for: .normal)
         cancelButton.setTitleColor(UIColor.white.withAlphaComponent(0.7), for: .normal)
         cancelButton.titleLabel?.font = .systemFont(ofSize: 15)
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
@@ -333,7 +337,7 @@ class LivenessCameraViewController: UIViewController {
     // MARK: - UI updates
 
     private func render(_ update: LivenessDetector.Update) {
-        let prompt = options.prompt(update.promptKey)
+        let prompt = self.prompt(update.promptKey)
         let step = stepLabelText(for: update)
         let framed = update.state == .challenge || update.state == .capturing
 
@@ -360,7 +364,8 @@ class LivenessCameraViewController: UIViewController {
               let index = order.firstIndex(of: challenge) else {
             return ""
         }
-        return "STEP \(index + 1) OF \(order.count)"
+        return labels.text("liveness.step",
+                           ["index": String(index + 1), "total": String(order.count)])
     }
 
     // MARK: - Completion
@@ -631,7 +636,7 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
             finishWithSuccess()
         } else {
             finish(failure: update.failureCode ?? "UNKNOWN",
-                   message: Self.failureMessage(update.failureCode))
+                   message: failureMessage(update.failureCode))
         }
     }
 
@@ -755,7 +760,23 @@ extension LivenessCameraViewController: AVCaptureVideoDataOutputSampleBufferDele
         }
     }
 
-    static func failureMessage(_ code: String?) -> String {
+    /// A challenge prompt.
+    ///
+    /// The prompts option predates the label bundle and some callers still pass it, so it wins
+    /// where it is set; everything else comes from labels, which is where new copy belongs.
+    private func prompt(_ key: String) -> String {
+        let fromOptions = options.prompt(key)
+        if !fromOptions.isEmpty && options.promptWasOverridden(key) { return fromOptions }
+        return labels.text("liveness." + key)
+    }
+
+    /// The message for a failure code, from the bundle, so a translated screen does not end on an
+    /// English sentence.
+    private func failureMessage(_ code: String?) -> String {
+        return labels.text("error." + (code ?? "UNKNOWN"))
+    }
+
+    static func legacyFailureMessage(_ code: String?) -> String {
         switch code {
         case "NO_FACE_TIMEOUT":
             return "We could not see your face. Please try again in better lighting."

@@ -71,6 +71,8 @@ public class LivenessOptions {
     public boolean videoTrimToChallenges = true;
 
     private final Map<String, String> prompts = defaultPrompts();
+    /** Which prompts the caller actually set, so the label bundle supplies the rest. */
+    private final java.util.Set<String> overriddenPrompts = new java.util.HashSet<>();
 
     public static LivenessOptions fromJson(String json) {
         LivenessOptions options = new LivenessOptions();
@@ -143,6 +145,7 @@ public class LivenessOptions {
                 JSONObject overrides = root.getJSONObject("prompts");
                 for (String key : options.prompts.keySet()) {
                     if (overrides.has(key)) {
+                        options.overriddenPrompts.add(key);
                         options.prompts.put(key, overrides.getString(key));
                     }
                 }
@@ -189,6 +192,15 @@ public class LivenessOptions {
     public String prompt(String key) {
         String value = prompts.get(key);
         return value != null ? value : "";
+    }
+
+    /**
+     * True only for a prompt the caller passed. Without this the defaults in this file would
+     * shadow the label bundle for every prompt, and translating the liveness screen through labels
+     * would appear to do nothing.
+     */
+    public boolean promptWasOverridden(String key) {
+        return overriddenPrompts.contains(key);
     }
 
     private static LivenessDetector.Challenge parseChallenge(String name) {

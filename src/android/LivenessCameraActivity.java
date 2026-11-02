@@ -106,6 +106,8 @@ public class LivenessCameraActivity extends AppCompatActivity {
     private LivenessDetector detector;
     private LivenessVideoRecorder videoRecorder;
     private LivenessOptions options;
+    /** Supplied by the plugin through the Intent; the bundle always arrives complete. */
+    private Labels labels = Labels.empty();
     private volatile boolean finished = false;
 
     /** Best neutral frame so far, already rotated upright, plus its face box. */
@@ -157,6 +159,12 @@ public class LivenessCameraActivity extends AppCompatActivity {
         detector = new LivenessDetector(config);
 
         // Same reason as the MRZ screen: full-screen preview, so the chrome dodges the bars.
+        labels = Labels.fromJson(getIntent().getStringExtra("labels"),
+                                 getIntent().getStringExtra("direction"));
+        applyLabels("titleText", "liveness.title",
+                    "hintText", "liveness.hint",
+                    "cancelButton", "liveness.button.cancel");
+
         SystemBarInsets.apply(findViewById(android.R.id.content),
                 findViewById(getResId("topBar")),
                 findViewById(getResId("bottomPanel")));
@@ -442,7 +450,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
     private void updatePrompt(LivenessDetector.State state,
                               @Nullable LivenessDetector.Challenge challenge,
                               String promptKey) {
-        final String prompt = options.prompt(promptKey);
+        final String prompt = prompt(promptKey);
         final String step = stepLabel(state, challenge);
         final boolean framed = state == LivenessDetector.State.CHALLENGE
                 || state == LivenessDetector.State.CAPTURING;
@@ -450,7 +458,7 @@ public class LivenessCameraActivity extends AppCompatActivity {
         runOnUiThread(() -> {
             promptText.setText(prompt);
             stepText.setText(step);
-            hintText.setText(options.prompt("hint"));
+            hintText.setText(prompt("hint"));
             if (!finished) {
                 setGuideOvalBorder(framed ? Color.parseColor("#64B5F6") : Color.WHITE);
             }
@@ -686,5 +694,36 @@ public class LivenessCameraActivity extends AppCompatActivity {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         return format.format(new Date());
+    }
+
+    /**
+     * Replaces every string the layout ships with the one the application supplied.
+     *
+     * The layout keeps its English so it still renders in Android Studio's preview; nothing it
+     * contains reaches a customer without passing through here first.
+     */
+    /**
+     * A challenge prompt.
+     *
+     * The prompts option predates the label bundle and some callers still pass it, so it wins
+     * where it is set; everything else comes from labels, which is where new copy belongs.
+     */
+    private String prompt(String key) {
+        if (options != null && options.promptWasOverridden(key)) {
+            return options.prompt(key);
+        }
+        return labels.text("liveness." + key);
+    }
+
+    private void applyLabels(String... viewAndKeyPairs) {
+        labels.applyDirection(findViewById(android.R.id.content));
+        for (int i = 0; i + 1 < viewAndKeyPairs.length; i += 2) {
+            int id = getResources().getIdentifier(viewAndKeyPairs[i], "id", getPackageName());
+            if (id == 0) continue;
+            android.view.View view = findViewById(id);
+            if (view instanceof android.widget.TextView) {
+                ((android.widget.TextView) view).setText(labels.text(viewAndKeyPairs[i + 1]));
+            }
+        }
     }
 }

@@ -774,6 +774,48 @@ duplicated. The root-level copies can go in a `schemaVersion` 2 once backends ha
 `NfcDocumentReader.unify(storedPayload, "captureAndReadNFC")` applies the envelope to a payload
 captured before it existed, so archived results can be brought up to the current shape.
 
+## Labels and languages
+
+Every string the plugin's screens show is overridable, in one flat bundle. 89 keys, covering the
+NFC sheet, the MRZ scanner, document capture, the liveness check and the messages delivered to the
+error callback.
+
+```javascript
+NfcDocumentReader.setLabels({
+    "nfc.ready.title":  "جاهز للمسح",
+    "mrz.button.confirm": "تأكيد",
+    "liveness.smile":   "ابتسم"
+});
+NfcDocumentReader.setDirection("rtl");
+```
+
+Call both again when the application's language changes. A partial bundle is fine — keys you leave
+out keep their current value, so a half-finished translation shows the rest in English rather than
+blank. An unknown key is reported to the console rather than ignored, because a typo'd override is
+otherwise indistinguishable from a label that simply refuses to change.
+
+Ready-made `en`, `ar` and `fr` bundles are in [`docs/labels/`](docs/labels/). **The Arabic and
+French are drafts and need your review** — they are deliberately not compiled in.
+
+| | |
+|---|---|
+| `setLabels(bundle)` | Replace labels for every subsequent call |
+| `setDirection("rtl" \| "ltr")` | Lay the screens out right-to-left |
+| `labelKeys()` | Every key the plugin understands |
+| `labels()` | The bundle as it would be sent right now |
+| `options.labels` | Per-call override, on top of the session bundle |
+
+**`setDirection` is not optional for Arabic.** Arabic strings in a left-to-right layout still read
+wrong — the close button, the step counter and the action buttons sit where the reader finishes
+rather than where they start. It is explicit rather than inferred from the bundle's characters,
+because which way a customer's screen should flow is the application's decision.
+
+The defaults live in `DEFAULT_LABELS` in `www/NfcDocumentReader.js` and nowhere else: the native
+layers hold none and are handed the resolved bundle at call time. Two hardcoded English copies
+would drift, and a label that drifts in a language nobody on the team reads goes unnoticed until a
+customer reports it. `node tools/labels/check.js docs/labels/ar.json` checks a bundle for missing
+keys, dropped `{placeholders}` and typos.
+
 ## `verification` — the block to build logic on
 
 The native payload reports every check separately and precisely, which is right for an audit trail

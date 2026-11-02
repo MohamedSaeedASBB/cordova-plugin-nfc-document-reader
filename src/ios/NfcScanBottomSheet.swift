@@ -5,6 +5,9 @@ class NfcScanBottomSheet: UIViewController {
 
     var onCancel: (() -> Void)?
 
+    /// Supplied by the plugin before presentation; the bundle always arrives complete.
+    var labels = Labels(nil, direction: nil)
+
     // UI elements
     private let containerView = UIView()
     private let dragHandle = UIView()
@@ -21,6 +24,7 @@ class NfcScanBottomSheet: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        labels.applyDirection(to: view)
         view.backgroundColor = .clear
         setupUI()
 
@@ -70,7 +74,7 @@ class NfcScanBottomSheet: UIViewController {
         containerView.addSubview(iconLabel)
 
         // Title
-        titleLabel.text = "Ready to Scan"
+        titleLabel.text = labels.text("nfc.ready.title")
         titleLabel.font = .boldSystemFont(ofSize: 20)
         titleLabel.textAlignment = .center
         titleLabel.textColor = .label
@@ -78,7 +82,7 @@ class NfcScanBottomSheet: UIViewController {
         containerView.addSubview(titleLabel)
 
         // Description
-        descriptionLabel.text = "Hold your document against the back of your phone and keep it still."
+        descriptionLabel.text = labels.text("nfc.ready.description")
         descriptionLabel.font = .systemFont(ofSize: 15)
         descriptionLabel.textAlignment = .center
         descriptionLabel.textColor = .secondaryLabel
@@ -95,7 +99,7 @@ class NfcScanBottomSheet: UIViewController {
         containerView.addSubview(progressBar)
 
         // Status
-        statusLabel.text = "Waiting for document..."
+        statusLabel.text = labels.text("nfc.status.waiting")
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.textAlignment = .center
         statusLabel.textColor = .tertiaryLabel
@@ -103,7 +107,7 @@ class NfcScanBottomSheet: UIViewController {
         containerView.addSubview(statusLabel)
 
         // Cancel button
-        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.setTitle(labels.text("nfc.button.cancel"), for: .normal)
         cancelButton.setTitleColor(.systemRed, for: .normal)
         cancelButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
         cancelButton.backgroundColor = UIColor.systemGray6
@@ -252,9 +256,9 @@ class NfcScanBottomSheet: UIViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.iconLabel.text = "\u{2705}"
-            self.titleLabel.text = "Success"
-            self.descriptionLabel.text = "Document data read successfully."
-            self.statusLabel.text = "Complete"
+            self.titleLabel.text = self.labels.text("nfc.success.title")
+            self.descriptionLabel.text = self.labels.text("nfc.success.description")
+            self.statusLabel.text = self.labels.text("nfc.success.status")
             self.progressBar.setProgress(1.0, animated: true)
             self.progressBar.progressTintColor = UIColor.systemGreen
             self.cancelButton.isHidden = true
@@ -265,11 +269,11 @@ class NfcScanBottomSheet: UIViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.iconLabel.text = "\u{274C}"
-            self.titleLabel.text = "Error"
+            self.titleLabel.text = self.labels.text("nfc.error.title")
             self.descriptionLabel.text = message
-            self.statusLabel.text = "Failed"
+            self.statusLabel.text = self.labels.text("nfc.error.status")
             self.progressBar.isHidden = true
-            self.cancelButton.setTitle("Close", for: .normal)
+            self.cancelButton.setTitle(self.labels.text("nfc.button.close"), for: .normal)
         }
     }
 

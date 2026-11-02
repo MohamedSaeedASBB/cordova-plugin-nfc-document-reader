@@ -14,6 +14,9 @@ class MrzCameraViewController: UIViewController {
     weak var delegate: MrzCameraViewControllerDelegate?
     var documentType: String = "id"
 
+    /// Supplied by the plugin before presentation; the bundle always arrives complete.
+    var labels = Labels(nil, direction: nil)
+
     /// How the scanner paces itself, and how sure it has to be before accepting a read.
     /// Mirrors MrzCameraActivity: a single frame is a weak basis for a decision the rest of the
     /// flow depends on, so requiredMatches frames must agree on the complete MRZ, sampled at most
@@ -48,6 +51,7 @@ class MrzCameraViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        labels.applyDirection(to: view)
         view.backgroundColor = .black
         setupUI()
         checkCameraPermissionAndStart()
@@ -73,7 +77,7 @@ class MrzCameraViewController: UIViewController {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topBar)
 
-        titleLabel.text = "Scan MRZ"
+        titleLabel.text = labels.text("mrz.title")
         titleLabel.textColor = .white
         titleLabel.font = .boldSystemFont(ofSize: 18)
         titleLabel.textAlignment = .center
@@ -111,7 +115,7 @@ class MrzCameraViewController: UIViewController {
         view.addSubview(bottomPanel)
 
         // Status label
-        statusLabel.text = "Scanning..."
+        statusLabel.text = labels.text("mrz.status.scanning")
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.8)
         statusLabel.font = .systemFont(ofSize: 14)
         statusLabel.textAlignment = .center
@@ -133,7 +137,7 @@ class MrzCameraViewController: UIViewController {
         resultCard.addSubview(resultLabel)
 
         // Confirm button
-        confirmButton.setTitle("\u{2713}  Confirm", for: .normal)
+        confirmButton.setTitle("\u{2713}  " + labels.text("mrz.button.confirm"), for: .normal)
         confirmButton.backgroundColor = UIColor(red: 0.2, green: 0.7, blue: 0.3, alpha: 1.0)
         confirmButton.setTitleColor(.white, for: .normal)
         confirmButton.titleLabel?.font = .boldSystemFont(ofSize: 16)
@@ -144,7 +148,7 @@ class MrzCameraViewController: UIViewController {
         bottomPanel.addSubview(confirmButton)
 
         // Re-scan button
-        rescanButton.setTitle("\u{21BB}  Re-scan", for: .normal)
+        rescanButton.setTitle("\u{21BB}  " + labels.text("mrz.button.rescan"), for: .normal)
         rescanButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
         rescanButton.setTitleColor(.white, for: .normal)
         rescanButton.titleLabel?.font = .boldSystemFont(ofSize: 16)
@@ -157,7 +161,7 @@ class MrzCameraViewController: UIViewController {
         bottomPanel.addSubview(rescanButton)
 
         // Cancel button
-        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.setTitle(labels.text("mrz.button.cancel"), for: .normal)
         cancelButton.setTitleColor(UIColor.white.withAlphaComponent(0.7), for: .normal)
         cancelButton.titleLabel?.font = .systemFont(ofSize: 15)
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
@@ -257,7 +261,7 @@ class MrzCameraViewController: UIViewController {
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
               let input = try? AVCaptureDeviceInput(device: device) else {
-            statusLabel.text = "Camera not available"
+            statusLabel.text = labels.text("mrz.status.cameraUnavailable")
             return
         }
 
@@ -282,7 +286,7 @@ class MrzCameraViewController: UIViewController {
     }
 
     private func showPermissionDenied() {
-        statusLabel.text = "Camera permission is required to scan MRZ"
+        statusLabel.text = labels.text("mrz.status.permissionRequired")
     }
 
     // MARK: - Actions
@@ -301,7 +305,7 @@ class MrzCameraViewController: UIViewController {
 
         // Reset UI
         guideFrame.layer.borderColor = UIColor.white.cgColor
-        statusLabel.text = "Scanning..."
+        statusLabel.text = labels.text("mrz.status.scanning")
         resultCard.isHidden = true
         confirmButton.isHidden = true
         rescanButton.isHidden = true
@@ -345,7 +349,8 @@ extension MrzCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate 
                 guard self.agreesWithCandidate(result) else {
                     let seen = self.candidateMatches
                     DispatchQueue.main.async {
-                        self.statusLabel.text = "Hold steady — confirming (\(seen)/\(self.requiredMatches))"
+                        self.statusLabel.text = self.labels.text("mrz.status.confirming",
+                            ["seen": String(seen), "required": String(self.requiredMatches)])
                     }
                     return
                 }
@@ -383,10 +388,12 @@ extension MrzCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate 
         guideFrame.layer.borderColor = UIColor(red: 0.2, green: 0.8, blue: 0.3, alpha: 1.0).cgColor
 
         // Update status
-        statusLabel.text = "MRZ Detected (\(result.format))"
+        statusLabel.text = labels.text("mrz.status.detected", ["format": result.format])
 
         // Show result card
-        resultLabel.text = "Document: \(result.documentNumber)\nDate of Birth: \(result.dateOfBirth)\nDate of Expiry: \(result.dateOfExpiry)"
+        resultLabel.text = labels.text("mrz.result.documentNumber") + ": \(result.documentNumber)\n"
+            + labels.text("mrz.result.dateOfBirth") + ": \(result.dateOfBirth)\n"
+            + labels.text("mrz.result.dateOfExpiry") + ": \(result.dateOfExpiry)"
         resultCard.isHidden = false
 
         // Show buttons
