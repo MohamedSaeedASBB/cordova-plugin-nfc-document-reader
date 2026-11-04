@@ -69,6 +69,10 @@ actually asks for the keys the bundle defines:
 Run both before a release. Between them they cover the bundle and the screens; either alone
 leaves the gap the other catches.
 
+Neither reads the code as a compiler does, so follow them with `bash tools/ios-compile/check.sh`
+and `bash tools/android-compile/check.sh`. A label change touches every screen on both platforms,
+which is a wide surface for an ordinary compile error, and neither platform builds locally.
+
 ## Direction is not optional for Arabic
 
 `setDirection("rtl")` is separate from the bundle and has to be set as well. Arabic strings in a

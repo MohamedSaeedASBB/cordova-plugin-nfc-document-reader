@@ -1302,9 +1302,20 @@ copied from public benchmarks do not transfer to chip-portrait-versus-selfie pai
 
 | Tool | Purpose |
 |---|---|
+| `tools/ios-compile/check.sh` | Typechecks all of `src/ios` against stub dependency modules, without CocoaPods or Xcode |
+| `tools/android-compile/check.sh` | Compiles all of `src/android` offline, without the Gradle project |
+| `tools/labels/check.js` | Checks a label bundle for missing keys, dropped `{placeholders}` and typos |
+| `tools/labels/check-native.js` | Checks that every screen can reach the keys, and that no failure code lacks a message |
 | `tools/install-face-model.sh` | Installs an approved `.tflite`, verifies the FlatBuffer identifier, prints the SHA-256, uncomments the staging blocks |
 | `tools/face-match-calibration/calibrate.py --inspect` | Reports a model's real input/output shapes and the config they imply |
 | `tools/face-match-calibration/calibrate.py` | Sweeps thresholds over labelled pairs and reports FAR/FRR per operating point |
+
+Run the four checks before raising a PR. The two compile checks exist because neither platform
+builds locally — iOS needs CocoaPods and cannot link against an Apple Silicon simulator, Android
+needs a Cordova project that takes minutes to recreate — so without them a change ships on a
+read-through of the diff and the cloud build is the first thing that reads the code. See
+[`tools/ios-compile/README.md`](tools/ios-compile/README.md) for what the iOS stubs do and do not
+prove.
 
 The calibration input is customer biometric data: it makes no network calls, copies no images into
 its output, and offers `--anonymise-ids`. Run it inside the bank's environment. See

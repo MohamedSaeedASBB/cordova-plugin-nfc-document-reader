@@ -675,7 +675,7 @@ class NfcDocumentReaderPlugin: CDVPlugin {
                                               captureIssue: nil)
                     } else {
                         self.dismissNfcBottomSheet()
-                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.UNKNOWN"))
+                        let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: self.labels.text("error.UNKNOWN"))
                         self.commandDelegate.send(pluginResult, callbackId: callbackId)
                     }
 
@@ -719,11 +719,11 @@ class NfcDocumentReaderPlugin: CDVPlugin {
             self?.captureAfterRead = false
             self?.dismissNfcBottomSheet()
 
-            if let callbackId = self?.nfcCallbackId {
-                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: labels.text("error.NFC_CANCELLED"))
-                self?.commandDelegate.send(result, callbackId: callbackId)
-                self?.nfcCallbackId = nil
-                self?.documentReader = nil
+            if let self = self, let callbackId = self.nfcCallbackId {
+                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: self.labels.text("error.NFC_CANCELLED"))
+                self.commandDelegate.send(result, callbackId: callbackId)
+                self.nfcCallbackId = nil
+                self.documentReader = nil
             }
         }
 
