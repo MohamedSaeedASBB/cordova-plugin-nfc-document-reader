@@ -744,6 +744,7 @@ var NfcDocumentReader = {
      *                     summary },
      *     documentType, issuingState, primaryIdentifier, secondaryIdentifier,
      *     documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
+     *     personalNumberFromMrz,
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
      *     placeOfBirthLines[], permanentAddressLines[],   // the issuer's own components

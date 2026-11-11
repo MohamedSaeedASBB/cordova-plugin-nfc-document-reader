@@ -357,12 +357,30 @@ class NfcDocumentReaderWrapper {
         // other DG11 fields are in a single-byte Arabic code page, a perfectly ASCII number can be
         // lost along with them. Read directly from the data group as a fallback before dropping to
         // the MRZ, which on a TD1 holds a shorter number or none at all.
-        data["personalNumber"] = clean(
-            passport.personalNumber
-                ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagPersonalNumber,
-                                         in: passport.getDataGroup(.DG11)?.data)
-                ?? mrzFields["personalNumber"]
-                ?? "")
+        //
+        // DG11 is preferred over the MRZ, and not only because a TD1's MRZ field is shorter. The
+        // MRZ position is "personal number or other optional data elements": an issuer may put
+        // anything there. On the Algerian passport tested it holds a short issuer-specific code
+        // while DG11 carries the same 18-digit national number that issuer's ID card does, so
+        // reading the MRZ first returns a value that is not a personal number and loses the one
+        // that is. The MRZ value is reported in its own field rather than dropped, since it is
+        // what the MRZ check digits cover.
+        //
+        // An empty string counts as absent at every step. A present-but-empty DG11 field would
+        // otherwise satisfy `??` and stop the chain on nothing.
+        let mrzPersonalNumber = clean(mrzFields["personalNumber"] ?? "")
+        let dg11PersonalNumber = clean(passport.personalNumber ?? "")
+        let dg11PersonalNumberRaw = clean(
+            MrtdTextDecoder.value(tag: MrtdTextDecoder.tagPersonalNumber,
+                                  in: passport.getDataGroup(.DG11)?.data) ?? "")
+        if !dg11PersonalNumber.isEmpty {
+            data["personalNumber"] = dg11PersonalNumber
+        } else if !dg11PersonalNumberRaw.isEmpty {
+            data["personalNumber"] = dg11PersonalNumberRaw
+        } else {
+            data["personalNumber"] = mrzPersonalNumber
+        }
+        data["personalNumberFromMrz"] = mrzPersonalNumber
 
         // Format gender to match Android (Male/Female/Unspecified)
         let rawGender = nonEmpty(passport.gender, fallback: mrzFields["gender"] ?? "")
