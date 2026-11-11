@@ -748,6 +748,7 @@ var NfcDocumentReader = {
      *     faceImageBase64, signatureImageBase64,
      *     fullNameOfHolder, otherNames, personalSummary, placeOfBirth, permanentAddress, telephone,
      *     placeOfBirthLines[], permanentAddressLines[],   // the issuer's own components
+     *     dg11Fields, dg12Fields,                        // every text tag on the chip, by tag
      *     rawDataGroups,                                  // only with includeRawDataGroups: true
      *     issuingAuthority, dateOfIssue, endorsementsAndObservations,
      *     dataGroupsRead, authentication, textEncoding, readErrors

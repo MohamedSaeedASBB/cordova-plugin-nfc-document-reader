@@ -462,6 +462,18 @@ class NfcDocumentReaderWrapper {
             tag: MrtdTextDecoder.tagDateOfBirthInFull,
             in: passport.getDataGroup(.DG11)?.data) ?? ""
 
+        // Every text field the two data groups actually carry, keyed by ICAO tag and split into
+        // the issuer's own components. The named fields above are a reading of what the issuer
+        // meant by each tag; these are the record of what was on the chip, for a backend that
+        // maps per issuer. 0x5F18 reaches a caller only here — the plugin has no named field for
+        // custody information, and an Algerian passport keeps the holder's blood group in it.
+        data["dg11Fields"] = MrtdTextDecoder.textFields(
+            raw: passport.getDataGroup(.DG11)?.data,
+            tags: MrtdTextDecoder.dg11TextTags, encoding: recovered.encoding)
+        data["dg12Fields"] = MrtdTextDecoder.textFields(
+            raw: passport.getDataGroup(.DG12)?.data,
+            tags: MrtdTextDecoder.dg12TextTags, encoding: recovered.encoding)
+
         data["dateOfIssue"] = MrtdTextDecoder.value(
             tag: MrtdTextDecoder.tagDateOfIssue, in: passport.getDataGroup(.DG12)?.data) ?? ""
         data["endorsementsAndObservations"] = text(MrtdTextDecoder.tagEndorsements, "")

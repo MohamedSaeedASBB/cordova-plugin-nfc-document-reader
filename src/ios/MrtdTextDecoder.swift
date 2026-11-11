@@ -50,6 +50,42 @@ enum MrtdTextDecoder {
     static let tagEndorsements     = 0x5F1B
     static let tagDateOfIssue      = 0x5F26
 
+    /// Every DG11 tag that holds text, including the five this plugin has no named field for.
+    ///
+    /// The named fields are a reading of what an issuer meant. These are what the chip carries.
+    /// They are kept apart because an ICAO tag title is not a promise about its contents: the
+    /// Algerian ID puts sex and blood group in `0x5F42`, whose title is "permanent address", and
+    /// the Algerian passport puts a blood group in `0x5F18`, whose title is "custody information".
+    /// Both are the issuer's prerogative. Neither can be mapped by name.
+    static let dg11TextTags: Set<Int> = [0x5F0E, 0x5F0F, 0x5F10, 0x5F11, 0x5F12, 0x5F13, 0x5F14,
+                                         0x5F15, 0x5F16, 0x5F17, 0x5F18, 0x5F2B, 0x5F42]
+
+    /// DG12's text tags. 0x5F1D and 0x5F1E — images of the document front and rear — are
+    /// deliberately absent: they are binary, and decoding them as text yields noise.
+    static let dg12TextTags: Set<Int> = [0x5F19, 0x5F1A, 0x5F1B, 0x5F1C, 0x5F26, 0x5F27,
+                                         0x5F55, 0x5F56]
+
+    /// A data group's text tags, keyed by tag, with each value split into its components.
+    ///
+    /// `encoding` is the name `recover` returned, so a document that needed repairing reports
+    /// these fields repaired too rather than contradicting the named fields beside them. A tag
+    /// whose bytes will not decode is omitted rather than reported as noise.
+    static func textFields(raw: [UInt8]?, tags: Set<Int>, encoding: String?) -> [String: [String]] {
+        guard let raw = raw else { return [:] }
+        let chosen = candidateEncodings.first { $0.name == (encoding ?? "UTF-8") }?.encoding ?? .utf8
+
+        var out: [String: [String]] = [:]
+        for (tag, values) in parseTlv(raw) where tags.contains(tag) {
+            guard let bytes = values.first else { continue }
+            guard let text = String(bytes: bytes, encoding: chosen)
+                    ?? String(bytes: bytes, encoding: .utf8) else { continue }
+            let components = splitComponents(text)
+            guard !components.isEmpty else { continue }
+            out[String(format: "%04X", tag)] = components
+        }
+        return out
+    }
+
     /// One TLV value, decoded as UTF-8. For fields that are digits rather than script — the date
     /// of issue — where the recovery path above does not apply and never will: a date that is not
     /// valid UTF-8 is a corrupt date, not one in another code page.

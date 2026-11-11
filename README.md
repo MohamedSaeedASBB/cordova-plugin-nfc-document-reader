@@ -892,6 +892,8 @@ it.
   faceImageBase64, signatureImageBase64,
   fullNameOfHolder, fullNameOfHolderLines, otherNames, personalSummary,
   placeOfBirth, permanentAddress, telephone,
+  placeOfBirthLines, permanentAddressLines,
+  dg11Fields, dg12Fields,        // every text tag on the chip, keyed by tag
   issuingAuthority, dateOfIssue, endorsementsAndObservations,
   dataGroupsRead, authentication, readErrors,
 
@@ -984,6 +986,9 @@ The same caution applies to whole fields, not just components. Decoded from one 
 The plugin reports each tag under its ICAO name because that is what the tag is; it cannot know
 what an issuer chose to put there. A backend that maps `permanentAddress` to an address column
 will store a blood group.
+
+**Map from `dg11Fields` instead**, which reports the same text keyed by tag rather than by a name
+the issuer never agreed to. See [`dg11Fields` and `dg12Fields`](#dg11fields-and-dg12fields--map-by-tag-not-by-name).
 
 ### `dateOfBirthInFull`
 
@@ -1193,10 +1198,50 @@ and carries an 18-digit national number in DG11. An Algerian **passport** popula
 that code and dropped the national number, so two documents from one issuer disagreed about what
 `personalNumber` meant.
 
-**A DG11 field is whatever its issuer decided to put there.** On an Algerian ID the *permanent
-address* tag holds `["M", "ذكر", "O+"]` — sex in Latin, sex in Arabic, and blood group. It is not
-an address at all. Read `permanentAddressLines` and map the components against a real card of that
-issuer before naming them; the tag's ICAO title is not a promise about its contents.
+### `dg11Fields` and `dg12Fields` — map by tag, not by name
+
+**A DG11 field is whatever its issuer decided to put there.** A tag's ICAO title is not a promise
+about its contents, and the Algerian documents make that concrete:
+
+| Tag | ICAO title | What the Algerian document puts there |
+|---|---|---|
+| `5F42` | permanent address | sex in Latin, sex in Arabic, and blood group — on the **ID** card. Not an address. |
+| `5F18` | custody information | the holder's blood group — on the **passport** |
+| `5F15` | personal summary | height in centimetres |
+
+So a backend mapping `permanentAddress` to an address field stores a blood group. Worse, the same
+blood group on the passport used to reach the caller **nowhere at all**: there is no named field
+for `5F18`, and the plugin silently dropped it.
+
+`dg11Fields` and `dg12Fields` report every text tag the chip actually carries, keyed by tag and
+split into the issuer's own components:
+
+```json
+"dg11Fields": {
+  "5F0E": ["<surname>", "<given names>"],
+  "5F10": ["<18-digit national number>"],
+  "5F11": ["<place of birth>"],
+  "5F15": ["<height in cm>"],
+  "5F18": ["<blood group>"],
+  "5F2B": ["<date of birth, YYYYMMDD>"]
+},
+"dg12Fields": {
+  "5F19": ["<issuing authority>"],
+  "5F26": ["<date of issue, YYYYMMDD>"]
+}
+```
+
+A tag the chip does not carry is absent rather than empty, so this is also the answer to "what does
+this document actually have on it". DG12's `5F1D` and `5F1E` — images of the document front and
+rear — are excluded: they are binary, not text.
+
+**Map from these, per issuer.** The named fields beside them — `permanentAddress`, `placeOfBirth`,
+`personalSummary` and the rest — are a reading of what the issuer meant by each tag, and that
+reading is only ever as good as the issuer's conformance. They are unchanged and still populated,
+so nothing that reads them breaks; they are simply the wrong thing to map a new issuer from.
+
+Confirm the mapping against a real document of that issuer before naming anything. The plugin will
+not guess: it reports the tag and the text under it, which is the part that is a fact.
 
 ### Non-Latin text and `textEncoding`
 
