@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import android.util.Base64;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -93,6 +94,18 @@ public class DocumentData {
      * was decoded again with a code page chosen by inspection — see MrtdTextDecoder.
      */
     public String textEncoding = null;
+
+    /**
+     * Every text field DG11 and DG12 actually carry, keyed by ICAO tag ("5F42") and split into
+     * the issuer's own components.
+     *
+     * <p>The named fields above are a reading of what the issuer meant by each tag. These are the
+     * record of what was on the chip, for a backend that maps per issuer — and the only place a
+     * tag the plugin has no named field for, such as 0x5F18, reaches a caller at all.
+     */
+    public Map<String, List<String>> dg11Fields = new LinkedHashMap<>();
+    public Map<String, List<String>> dg12Fields = new LinkedHashMap<>();
+
     /** DG11's date of birth in full, YYYYMMDD. The MRZ only carries YYMMDD. */
     public String dateOfBirthInFull = "";
     public Map<Integer, String> readErrors = new HashMap<>();
@@ -179,6 +192,11 @@ public class DocumentData {
         // recovered with, so a reviewer can tell inspected text from text the issuer's own
         // encoding produced.
         json.put("textEncoding", textEncoding != null ? textEncoding : JSONObject.NULL);
+
+        // Keyed by ICAO tag rather than by name, because the name is the part that cannot be
+        // trusted across issuers. See the field's comment.
+        json.put("dg11Fields", tagFieldsToJson(dg11Fields));
+        json.put("dg12Fields", tagFieldsToJson(dg12Fields));
 
         // How much non-ASCII text this plugin put into the payload, counted as it was written.
         //
@@ -289,6 +307,17 @@ public class DocumentData {
             }
         }
         return total;
+    }
+
+    /** Tag -> components, with the tag as its four-character hex name. */
+    private static JSONObject tagFieldsToJson(Map<String, List<String>> fields)
+            throws JSONException {
+        JSONObject json = new JSONObject();
+        if (fields == null) return json;
+        for (Map.Entry<String, List<String>> entry : fields.entrySet()) {
+            json.put(entry.getKey(), toJsonArray(entry.getValue()));
+        }
+        return json;
     }
 
     private static JSONArray toJsonArray(List<String> values) {

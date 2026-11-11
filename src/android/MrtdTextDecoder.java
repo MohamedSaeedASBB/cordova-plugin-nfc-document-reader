@@ -211,6 +211,56 @@ final class MrtdTextDecoder {
         return text.isEmpty() ? null : text;
     }
 
+    /**
+     * Every DG11 tag that holds text, including the five this plugin has no named field for.
+     *
+     * The named fields are a reading of what an issuer meant. These are what the chip carries.
+     * They are kept apart because an ICAO tag title is not a promise about its contents: the
+     * Algerian ID puts sex and blood group in 0x5F42, whose title is "permanent address", and the
+     * Algerian passport puts a blood group in 0x5F18, whose title is "custody information". Both
+     * are the issuer's prerogative. Neither can be mapped by name.
+     */
+    static final int[] DG11_TEXT_TAGS = {
+        0x5F0E, 0x5F0F, 0x5F10, 0x5F11, 0x5F12, 0x5F13, 0x5F14,
+        0x5F15, 0x5F16, 0x5F17, 0x5F18, 0x5F2B, 0x5F42
+    };
+
+    /**
+     * DG12's text tags. 0x5F1D and 0x5F1E — images of the document front and rear — are
+     * deliberately absent: they are binary, and decoding them as text yields noise.
+     */
+    static final int[] DG12_TEXT_TAGS = {
+        0x5F19, 0x5F1A, 0x5F1B, 0x5F1C, 0x5F26, 0x5F27, 0x5F55, 0x5F56
+    };
+
+    /**
+     * A data group's text tags, keyed by tag, with each value split into its components.
+     *
+     * <p>{@code charsetName} is what {@link #recover} returned, so a document that needed
+     * repairing reports these fields repaired too rather than contradicting the named fields
+     * beside it. A tag whose bytes will not decode is omitted rather than reported as noise.
+     */
+    static Map<String, List<String>> textFields(byte[] raw, int[] tags, String charsetName) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        if (raw == null) return out;
+
+        Map<Integer, List<byte[]>> parsed = parseTlv(raw);
+        for (int tag : tags) {
+            List<byte[]> values = parsed.get(tag);
+            if (values == null || values.isEmpty()) continue;
+
+            String text = charsetName != null ? decodeStrictly(values.get(0), charsetName) : null;
+            if (text == null) {
+                text = new String(values.get(0), java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            if (text.isEmpty()) continue;
+
+            List<String> components = splitComponents(text);
+            if (!components.isEmpty()) out.put(String.format("%04X", tag), components);
+        }
+        return out;
+    }
+
     private static String decodeWith(Map<Integer, List<byte[]>> fields, int tag, String charsetName) {
         List<byte[]> values = fields.get(tag);
         if (values == null || values.isEmpty()) return null;
