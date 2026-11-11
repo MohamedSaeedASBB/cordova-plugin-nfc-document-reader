@@ -126,8 +126,8 @@ final class MrtdTextDecoder {
             if (name != null) data.fullNameOfHolder = name;
             if (summary != null) data.personalSummary = summary;
             if (phone != null) data.telephone = phone;
-            // Same rule as the reader: only fills what the MRZ left blank.
-            if (personalNumber != null && data.personalNumber.isEmpty()) {
+            // Same rule as the reader: DG11's own field wins over the MRZ's optional data.
+            if (personalNumber != null && !personalNumber.replace("<", "").trim().isEmpty()) {
                 data.personalNumber = personalNumber.replace("<", "").trim();
             }
             // The raw value keeps DG11's '<' separators, so split them back into the components

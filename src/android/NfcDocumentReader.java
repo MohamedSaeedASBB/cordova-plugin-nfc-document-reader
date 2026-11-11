@@ -530,8 +530,12 @@ public class NfcDocumentReader {
                 documentData.dateOfBirth = safeString(mrzInfo.getDateOfBirth());
                 documentData.gender = genderStr;
                 documentData.dateOfExpiry = safeString(mrzInfo.getDateOfExpiry());
-                String pn = safeString(mrzInfo.getPersonalNumber());
-                documentData.personalNumber = pn.replace("<", "").trim();
+                // Provisional: DG11's 0x5F10 overrides this below where the chip carries one.
+                // The MRZ value is kept as its own field either way, because the optional-data
+                // field it comes from is not required to hold a personal number at all.
+                String pn = safeString(mrzInfo.getPersonalNumber()).replace("<", "").trim();
+                documentData.personalNumber = pn;
+                documentData.personalNumberFromMrz = pn;
 
                 dataGroupsRead.add(1);
                 Log.d(TAG, "DG1 read successfully: " + documentData.primaryIdentifier + " " + documentData.secondaryIdentifier);
@@ -634,17 +638,22 @@ public class NfcDocumentReader {
                 } catch (Exception ignored) {}
                 documentData.telephone = safeString(dg11File.getTelephone());
 
-                // The MRZ's optional-data field is the usual home for the personal number, but not
-                // every issuer puts it there: an Algerian ID leaves it empty in the MRZ and carries
-                // it in DG11 instead. Only fills what DG1 left blank, so a card that populates both
-                // keeps the MRZ value, which is the one covered by the MRZ check digits.
-                if (documentData.personalNumber.isEmpty()) {
-                    String dg11PersonalNumber = safeString(dg11File.getPersonalNumber())
-                            .replace("<", "").trim();
-                    if (!dg11PersonalNumber.isEmpty()) {
-                        documentData.personalNumber = dg11PersonalNumber;
-                        Log.d(TAG, "Personal number taken from DG11; the MRZ field was empty");
-                    }
+                // DG11's 0x5F10 is a field that means "personal number" and nothing else. The MRZ
+                // position it used to be preferred over is "personal number OR other optional data
+                // elements" — an issuer may put anything there, and the check digit protects
+                // whatever it finds without making it a personal number.
+                //
+                // This used to fill only what the MRZ left blank, on the evidence of an Algerian
+                // ID that leaves the MRZ field empty and carries an 18-digit national number in
+                // DG11. An Algerian passport populates both: DG11 holds the same 18-digit number,
+                // while the MRZ holds a short issuer-specific code. Preferring the MRZ returned
+                // that code and dropped the national number entirely, which is what a caller
+                // asking for a personal number wants. iOS already read DG11 first, so the two
+                // platforms disagreed about the same chip.
+                String dg11PersonalNumber = safeString(dg11File.getPersonalNumber())
+                        .replace("<", "").trim();
+                if (!dg11PersonalNumber.isEmpty()) {
+                    documentData.personalNumber = dg11PersonalNumber;
                 }
 
                 dataGroupsRead.add(11);

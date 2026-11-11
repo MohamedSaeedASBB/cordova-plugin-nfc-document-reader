@@ -888,6 +888,7 @@ it.
 {
   documentType, issuingState, primaryIdentifier, secondaryIdentifier,
   documentNumber, nationality, dateOfBirth, gender, dateOfExpiry, personalNumber,
+  personalNumberFromMrz,
   faceImageBase64, signatureImageBase64,
   fullNameOfHolder, fullNameOfHolderLines, otherNames, personalSummary,
   placeOfBirth, permanentAddress, telephone,
@@ -1181,10 +1182,16 @@ The joined strings are for display. The arrays are what application logic should
 Arabic form for an Arabic interface means taking an element, not splitting a string and knowing the
 convention. The order is the card's, not a guarantee that Latin comes first.
 
-`personalNumber` comes from the MRZ where the issuer puts it there, and from DG11 (`0x5F10`) where
-they do not: an Algerian ID leaves the MRZ field empty and carries an 18-digit national number in
-DG11. The MRZ value wins when a card populates both, since that is the one the MRZ check digits
-cover.
+`personalNumber` comes from DG11 (`0x5F10`) where the chip carries one, and from the MRZ where it
+does not. `personalNumberFromMrz` always carries the MRZ value, so both are available.
+
+DG11's field means "personal number" and nothing else. The MRZ position is "personal number **or
+other optional data elements**", which an issuer may fill with anything; the check digit protects
+whatever is there without making it a personal number. An Algerian ID leaves that MRZ field empty
+and carries an 18-digit national number in DG11. An Algerian **passport** populates both — the same
+18-digit number in DG11, and a short issuer-specific code in the MRZ. Preferring the MRZ returned
+that code and dropped the national number, so two documents from one issuer disagreed about what
+`personalNumber` meant.
 
 **A DG11 field is whatever its issuer decided to put there.** On an Algerian ID the *permanent
 address* tag holds `["M", "ذكر", "O+"]` — sex in Latin, sex in Arabic, and blood group. It is not
@@ -1223,6 +1230,27 @@ Android's decoder substitutes `U+FFFD` per unreadable byte, so damage shows as b
 nil for the whole field, so the same document arrives with **empty fields** — which reads as "this
 document has no place of birth" rather than as an error. Detection therefore works from the raw
 bytes on both, not from the decoded string.
+
+#### A document without Arabic is not a document that lost it
+
+Two documents from one issuer need not carry the same fields, and the Algerian pair do not. The ID
+card writes its DG11 name as `LATIN<<ARABIC` and needs the recovery above. The Algerian **passport**
+tested carries no Arabic at all: its DG11 is seven fields of pure ASCII, the chip holds only DG1,
+DG2, DG7, DG11 and DG12, and the SOD lists no others. There is nothing to recover and nothing to
+decode, so no plugin change can produce an Arabic name from it.
+
+The payload distinguishes the two cases without the physical card, so check it before reporting
+Arabic as lost:
+
+| Reading | Means |
+|---|---|
+| `textRecovery.nonAsciiCharacters: 0` and `textEncoding: null` | the chip carried no non-Latin text; nothing was lost |
+| `nonAsciiCharacters` above zero, but `?????` at the back office | the text left the handset intact and was destroyed downstream |
+| `fullNameOfHolderLines` with one Latin component | the field holds no Arabic half to split out |
+
+A chip that has Arabic shows it in that counter, because the count is taken from the finished
+payload on the way out. See [Arabic arriving as `?????`](#arabic-arriving-as-) for the downstream
+case, which is a database or connection charset, not this plugin.
 
 ### Images in the payload
 
@@ -1313,9 +1341,10 @@ copied from public benchmarks do not transfer to chip-portrait-versus-selfie pai
 Run the four checks before raising a PR. The two compile checks exist because neither platform
 builds locally — iOS needs CocoaPods and cannot link against an Apple Silicon simulator, Android
 needs a Cordova project that takes minutes to recreate — so without them a change ships on a
-read-through of the diff and the cloud build is the first thing that reads the code. See
-[`tools/ios-compile/README.md`](tools/ios-compile/README.md) for what the iOS stubs do and do not
-prove.
+read-through of the diff and the cloud build is the first thing that reads the code. Neither needs
+anything prepared first. See [`tools/ios-compile/README.md`](tools/ios-compile/README.md) and
+[`tools/android-compile/README.md`](tools/android-compile/README.md) for what each does and does
+not prove.
 
 The calibration input is customer biometric data: it makes no network calls, copies no images into
 its output, and offers `--anonymise-ids`. Run it inside the bank's environment. See

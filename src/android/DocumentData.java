@@ -29,6 +29,13 @@ public class DocumentData {
     public String gender = "";
     public String dateOfExpiry = "";        // YYMMDD
     public String personalNumber = "";
+    /**
+     * The MRZ's optional-data field, verbatim. Reported separately because that position is
+     * "personal number or other optional data elements" — an Algerian passport puts a short
+     * issuer-specific code there while DG11 carries the real 18-digit national number — so
+     * {@link #personalNumber} prefers DG11 and this keeps what the MRZ said.
+     */
+    public String personalNumberFromMrz = "";
 
     // DG2 - Facial Image
     public Bitmap faceImage = null;
@@ -108,6 +115,7 @@ public class DocumentData {
         json.put("gender", gender);
         json.put("dateOfExpiry", dateOfExpiry);
         json.put("personalNumber", personalNumber);
+        json.put("personalNumberFromMrz", personalNumberFromMrz);
 
         // DG2 - Face Image as Base64
         if (faceImage != null) {
