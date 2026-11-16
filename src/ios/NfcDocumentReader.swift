@@ -345,8 +345,17 @@ class NfcDocumentReaderWrapper {
             .trimmingCharacters(in: .whitespaces)
         data["documentType"] = nonEmpty(documentCode, fallback: mrzFields["documentType"] ?? "")
         data["issuingState"] = nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
-        data["primaryIdentifier"] = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
-        data["secondaryIdentifier"] = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
+        // The MRZ is where the primary and secondary identifiers are defined, and it is read
+        // first for that reason. NFCPassportReader's lastName and firstName are not that: they
+        // come from DG11's name-of-holder split on a single *space*, and DG11 separates the
+        // holder's name components with "<<". On a passport whose DG11 reads "SURNAME<<GIVEN"
+        // there is no space to split on, so lastName became the entire name with the separators
+        // turned into blanks and firstName came back empty — one field holding two names, while
+        // Android reported them apart. They stay as the fallback for a read with no DG1.
+        data["primaryIdentifier"] = clean(nonEmpty(mrzFields["primaryIdentifier"] ?? "",
+                                                   fallback: passport.lastName))
+        data["secondaryIdentifier"] = clean(nonEmpty(mrzFields["secondaryIdentifier"] ?? "",
+                                                     fallback: passport.firstName))
         data["documentNumber"] = nonEmpty(passport.documentNumber, fallback: mrzFields["documentNumber"] ?? "")
             .replacingOccurrences(of: "<", with: "").trimmingCharacters(in: .whitespaces)
         data["nationality"] = nonEmpty(passport.nationality, fallback: mrzFields["nationality"] ?? "")
@@ -407,8 +416,10 @@ class NfcDocumentReaderWrapper {
         }
 
         // DG11 - Additional Personal Details
-        let lastName = clean(nonEmpty(passport.lastName, fallback: mrzFields["primaryIdentifier"] ?? ""))
-        let firstName = clean(nonEmpty(passport.firstName, fallback: mrzFields["secondaryIdentifier"] ?? ""))
+        let lastName = clean(nonEmpty(mrzFields["primaryIdentifier"] ?? "",
+                                      fallback: passport.lastName))
+        let firstName = clean(nonEmpty(mrzFields["secondaryIdentifier"] ?? "",
+                                       fallback: passport.firstName))
         // DG11/DG12 text, recovered when the issuer did not use UTF-8. On iOS a field that will
         // not decode comes back nil rather than as replacement characters, so the same
         // non-conformant document that shows boxes on Android shows *empty fields* here — which
@@ -425,7 +436,13 @@ class NfcDocumentReaderWrapper {
         let placeOfBirth = text(MrtdTextDecoder.tagPlaceOfBirth, passport.placeOfBirth)
         let permanentAddress = text(MrtdTextDecoder.tagPermanentAddress, passport.residenceAddress)
 
+        // DG11's 0x5F0E, read from the data group rather than through the library: it replaces
+        // the "<<" between the name's components with blanks, so the separators that
+        // fullNameOfHolderLines splits on were already gone and the whole field arrived as one
+        // line. Android reports this field as the chip stores it; so does this now.
         let fullName = recovered.fields[MrtdTextDecoder.tagFullName]
+            ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagFullName,
+                                     in: passport.getDataGroup(.DG11)?.data)
             ?? (lastName + " " + firstName).trimmingCharacters(in: .whitespaces)
         data["fullNameOfHolder"] = fullName
         // The components, as placeOfBirthLines and permanentAddressLines already report theirs.
@@ -439,7 +456,13 @@ class NfcDocumentReaderWrapper {
             ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagOtherNames,
                                      in: passport.getDataGroup(.DG11)?.data)
         data["otherNames"] = MrtdTextDecoder.splitComponents(otherNames ?? "")
-        data["personalSummary"] = text(MrtdTextDecoder.tagPersonalSummary, "")
+        // DG11's 0x5F15. The library parses it but keeps it internal, and the fallback here was
+        // the empty string — so the field was empty on every document that did not take the
+        // recovery path, which is every conformant document.
+        data["personalSummary"] = text(
+            MrtdTextDecoder.tagPersonalSummary,
+            MrtdTextDecoder.value(tag: MrtdTextDecoder.tagPersonalSummary,
+                                  in: passport.getDataGroup(.DG11)?.data))
         // Joined for display; the components are what application logic should read, because a
         // single DG11 field can carry several unrelated attributes. See README.
         data["placeOfBirth"] = MrtdTextDecoder.splitComponents(placeOfBirth).joined(separator: ", ")
@@ -451,8 +474,15 @@ class NfcDocumentReaderWrapper {
         data["textEncoding"] = recovered.encoding ?? NSNull()
 
         // DG12 - Additional Document Details
+        // DG12's 0x5F19, read from the data group. NFCPassportReader's issuingAuthority is not
+        // this field: it is the MRZ's issuing *state*, element 5F28, the three-letter country
+        // code. A passport issued by a named office therefore reported the country here while
+        // Android reported the office. The country code is still issuingState; falling back to
+        // it under this name filed one fact as another.
         data["issuingAuthority"] = recovered.fields[MrtdTextDecoder.tagIssuingAuthority]
-            ?? nonEmpty(passport.issuingAuthority, fallback: mrzFields["issuingState"] ?? "")
+            ?? MrtdTextDecoder.value(tag: MrtdTextDecoder.tagIssuingAuthority,
+                                     in: passport.getDataGroup(.DG12)?.data)
+            ?? ""
         // The MRZ gives a two-digit year, so 970702 is 1997 or 2097 and the reader has to guess.
         // DG11 carries the date in full where the issuer wrote it, and an Algerian card does.
         // Reported separately rather than replacing dateOfBirth: that field is what the chip's
@@ -550,10 +580,41 @@ class NfcDocumentReaderWrapper {
         return data
     }
 
+    /// The MRZ as lines, whatever the library hands over.
+    ///
+    /// DG1 stores the MRZ without line breaks and NFCPassportReader returns it that way, while
+    /// everything below works on lines — so the whole parser was silently returning nothing, and
+    /// every field that falls back to it got an empty string instead. Split on the fixed widths
+    /// ICAO 9303 defines: TD1 is three lines of 30, TD2 two of 36, TD3 two of 44.
+    private func mrzLines(_ mrz: String) -> [String] {
+        let split = mrz.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if split.count > 1 { return split }
+
+        guard let flat = split.first else { return [] }
+        let width: Int
+        switch flat.count {
+        case 90: width = 30
+        case 72: width = 36
+        case 88: width = 44
+        default: return split
+        }
+
+        var lines: [String] = []
+        var start = flat.startIndex
+        while start < flat.endIndex {
+            let end = flat.index(start, offsetBy: width, limitedBy: flat.endIndex) ?? flat.endIndex
+            lines.append(String(flat[start..<end]))
+            start = end
+        }
+        return lines
+    }
+
     /// Parse raw MRZ string into field dictionary as fallback
     private func parseMRZString(_ mrz: String) -> [String: String] {
         var fields: [String: String] = [:]
-        let lines = mrz.components(separatedBy: "\n").filter { !$0.isEmpty }
+        let lines = mrzLines(mrz)
 
         if lines.count == 2 && lines[0].count >= 44 {
             // TD3 (Passport) - 2 lines of 44 chars
