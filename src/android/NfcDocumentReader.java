@@ -700,6 +700,15 @@ public class NfcDocumentReader {
             // back with replacement characters. See MrtdTextDecoder.
             documentData.textEncoding = MrtdTextDecoder.recover(documentData, rawDgBytes);
 
+            // Every text tag the two groups carry, keyed by tag. Built after recovery so a
+            // document that needed repairing reports these repaired too, and before the raw bytes
+            // are dropped below. 0x5F18 reaches a caller only here — there is no named field for
+            // custody information, and an Algerian passport keeps the holder's blood group in it.
+            documentData.dg11Fields = MrtdTextDecoder.textFields(
+                    rawDgBytes.get(11), MrtdTextDecoder.DG11_TEXT_TAGS, documentData.textEncoding);
+            documentData.dg12Fields = MrtdTextDecoder.textFields(
+                    rawDgBytes.get(12), MrtdTextDecoder.DG12_TEXT_TAGS, documentData.textEncoding);
+
             // ---- Passive authentication ----
             // Runs last because it needs both the SOD and every data group's raw bytes. Skipped
             // only when no context was supplied, in which case the payload reports "notVerified"
