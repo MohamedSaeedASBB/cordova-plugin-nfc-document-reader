@@ -1119,6 +1119,14 @@ from DG11, along with `placeOfBirth`, `permanentAddress` and `issuingAuthority`.
 DG11 returns those empty, which is a property of the card rather than a fault — `readErrors` says
 so when the chip answered FILE NOT FOUND.
 
+Both platforms read these out of the data groups themselves rather than through the reader
+library's derived properties, because on iOS those properties are derived from the wrong thing.
+NFCPassportReader's `lastName` and `firstName` come from DG11's name of holder split on a single
+*space*, and DG11 separates a field's components with `<<` — so a document whose DG11 holds
+`SURNAME<<GIVEN` has no space to split on, and the entire name arrived in `primaryIdentifier`
+with `secondaryIdentifier` empty while Android reported the two apart. Its `issuingAuthority` is
+a different field again: the MRZ's issuing *state*, which this payload calls `issuingState`.
+
 ### Arabic arriving as `?????`
 
 If the holder's name reaches your backend as question marks, **the plugin is not where it was lost.**
